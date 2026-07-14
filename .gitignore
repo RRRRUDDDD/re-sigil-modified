@@ -1,0 +1,89 @@
+# Local CCG workflow state (never publish)
+/.ccg/
+/.firecrawl/
+
+# CMake build trees and generated files
+/build/
+/build-*/
+/dist/
+/AppDir/
+/out/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/CTestTestfile.cmake
+/install_manifest.txt
+/Makefile
+/.ninja_deps
+/.ninja_log
+/build.ninja
+/rules.ninja
+
+# Generated binaries and packages
+/bin/
+/lib/
+/package/
+Sigil-1.9.30.X5-*.tar.gz
+*.AppImage
+*.log
+*.a
+*.d
+*.dll
+*.dylib
+*.exe
+*.ilk
+*.lib
+*.o
+*.obj
+*.pdb
+*.so
+*.so.*
+
+# Qt generated files
+.qmake.stash
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.qm
+
+# IDE and editor state
+/.vs/
+/.vscode/
+/.idea/
+/.qtcreator/
+/.cache/
+*.pro.user
+*.pro.user.*
+*.suo
+*.user
+*.user.*
+*.VC.db
+*.VC.opendb
+
+# Platform-specific build directories
+/Debug/
+/Release/
+/RelWithDebInfo/
+/MinSizeRel/
+/Win32/
+/x64/
+*.app/
+*.dSYM/
+*.dmg
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor swap and backup files
+*~
+*.bak
+*.orig
+*.swp
+*.tmp
