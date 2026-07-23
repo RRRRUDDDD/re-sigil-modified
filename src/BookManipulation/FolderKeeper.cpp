@@ -733,6 +733,7 @@ void FolderKeeper::DiscardResourceRegistration(Resource *resource)
         return;
     }
 
+    bool path_taken_over = false;
     {
         QMutexLocker locker(&m_AccessMutex);
         if (m_Resources.value(resource->GetIdentifier(), NULL) != resource) {
@@ -741,11 +742,25 @@ void FolderKeeper::DiscardResourceRegistration(Resource *resource)
         m_Resources.remove(resource->GetIdentifier());
         if (m_Path2Resource.value(resource->GetRelativePath(), NULL) == resource) {
             m_Path2Resource.remove(resource->GetRelativePath());
+        } else {
+            // another (newer) resource owns this book path - e.g. a plugin
+            // declared the same href as added and deleted
+            path_taken_over = m_Path2Resource.contains(resource->GetRelativePath());
         }
     }
 
+    // Both resources share the same file on disk when the path was taken
+    // over, so only stop watching it when nothing owns it anymore.
+    if (!path_taken_over) {
+        if (m_FSWatcher->files().contains(resource->GetFullPath())) {
+            m_FSWatcher->removePath(resource->GetFullPath());
+        }
+        m_SuspendedWatchedFiles.removeAll(resource->GetFullPath());
+    }
     disconnect(resource, 0, this, 0);
-    delete resource;
+    // deleteLater instead of delete: the resource may still be referenced by
+    // UI objects (e.g. a closing tab) whose teardown is queued on the event loop.
+    resource->deleteLater();
 }
 
 //修改：添加BulkResourceRenamed函数

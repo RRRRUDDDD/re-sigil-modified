@@ -836,6 +836,21 @@ bool PluginRunner::deleteFiles(const QStringList &files)
             continue;
         }
         if (resource) {
+            // When a plugin declares the same href as both added and deleted,
+            // addFiles has already overwritten the file on disk and re-pointed
+            // the book path table at the new resource. Deleting the old resource
+            // here would wipe the freshly written file and orphan the new
+            // resource, so just retire the stale resource object instead.
+            Resource *current_owner = m_book->GetFolderKeeper()->GetResourceByBookPathNoThrow(href);
+            if (current_owner && current_owner != resource) {
+                if (tabResources.contains(resource)) {
+                    m_tabManager->CloseTabForResource(resource);
+                }
+                m_book->GetFolderKeeper()->DiscardResourceRegistration(resource);
+                m_hrefToRes[href] = current_owner;  // heal the dangling pointer
+                changes_made = true;
+                continue;
+            }
             ui.statusLbl->setText(tr("Status: deleting") + " " + resource->ShortPathName());
 
             if (tabResources.contains(resource)) {

@@ -610,7 +610,7 @@ int main(int argc, char *argv[])
 #endif
 
         // The modified build deliberately disables Sigil's automatic update
-        // check so this modified build remains on the 1.9.30.X5A code line.
+        // check so this modified build remains on the 1.9.30.X5B code line.
 
         // select the icon theme to use
         QString RCCResourcePath;

@@ -104,9 +104,10 @@ public:
                                        const QString &folderpath = QString("\\"));
 
     /**
-     * Silently discards a newly created Resource before its registration is
-     * committed. This is only for failure rollback: the file on disk and the
-     * OPF are left untouched, and ResourceRemoved is not emitted.
+     * Silently retires a Resource object without touching the file on disk or
+     * the OPF, and without emitting ResourceRemoved. Used for failure rollback
+     * of a half-registered resource, and by PluginRunner to drop a stale
+     * resource whose book path has been taken over by a newly added one.
      */
     void DiscardResourceRegistration(Resource *resource);
 
