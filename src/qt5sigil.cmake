@@ -233,6 +233,8 @@ else()
 endif()
 if ( WIN32 )
     list( APPEND LIBS_TO_LINK Qt5::WinExtras )
+    # OleFlushClipboard in MainWindow::closeEvent
+    list( APPEND LIBS_TO_LINK ole32 )
 endif()
 target_link_libraries( ${PROJECT_NAME} ${LIBS_TO_LINK} )
 

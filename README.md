@@ -10,8 +10,6 @@
 Sigil 对 EPUB 规范支持完善、操作界面友好，但编辑包含数百至数千个文件的大型 EPUB 时，部分操作可能耗时较长。
 草莓佬的修改版围绕大型 EPUB 的编辑效率、代码编辑体验、格式转换和实用工具进行了长期优化；本仓库在此基础上继续维护稳定性和常用功能。
 
-X5 仍保持在 Sigil 1.9.30 ，没有升级到 Sigil 2。
-
 ## 下载
 
 可在 [GitHub Releases](https://github.com/RRRRUDDDD/re-sigil-modified/releases) 下载自动构建的 Windows x86/x64 安装程序和 macOS x64/ARM64 DMG。

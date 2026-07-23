@@ -47,6 +47,10 @@
 #include <QtWinExtras>
 #endif
 #endif
+#ifdef Q_OS_WIN32
+#include <QClipboard>
+#include <ole2.h>  // OleFlushClipboard: keep clipboard data alive after exit
+#endif
 #include <QString>
 #include <QStringList>
 #include <QFont>
@@ -1873,6 +1877,15 @@ void MainWindow::closeEvent(QCloseEvent *event)
         // Qt BUG:  macOS can not be left in fullscreen or maximized mode upon exit
         if (isFullScreen()) setWindowState(windowState() & ~Qt::WindowFullScreen);
         if (isMaximized()) setWindowState(windowState() & ~Qt::WindowMaximized);
+#endif
+#ifdef Q_OS_WIN32
+        // Qt only places a delayed-render handle on the Windows clipboard; the
+        // real data lives in this process. Without flushing, Windows has to ask
+        // the dying process to render it (a multi-second hang) and the request
+        // fails, so anything copied in Sigil vanishes on exit (QTBUG-11616).
+        if (QApplication::clipboard()->ownsClipboard()) {
+            OleFlushClipboard();
+        }
 #endif
         event->accept();
     } else {

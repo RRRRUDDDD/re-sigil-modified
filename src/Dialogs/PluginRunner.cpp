@@ -947,6 +947,13 @@ bool PluginRunner::addFiles(const QStringList &files)
 
         Resource *resource = m_book->GetFolderKeeper()->AddContentFileToFolder(inpath,false, mime, href);
 
+        // AddContentFileToFolder returns NULL when the file cannot be placed in
+        // the book folder. Never dereference it blindly - report and move on.
+        if (!resource) {
+            ui.textEdit->append(tr("Error: failed to add") + " " + href);
+            continue;
+        }
+
         // AudioResource, VideoResource, FontResource, ImageResource do not appear to be cached
         // For new Editable Resources must do the equivalent of the InitialLoad
         // Order is important as some resource types inherit from other resource types

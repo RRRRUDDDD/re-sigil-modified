@@ -251,8 +251,16 @@ Resource *FolderKeeper::AddContentFileToFolder(const QString &fullfilepath,
     // skip copy if unpacking zip already put it in the right place
     if (fullfilepath != new_file_path) {
         if (!QFile::copy(fullfilepath, new_file_path)) {
-            DiscardResourceRegistration(resource);
-            return NULL;
+            // QFile::copy refuses to overwrite an existing target. Plugins add
+            // replacement files before the old ones are deleted, so a same-name
+            // target on disk is expected here - overwrite it instead of failing.
+            if (QFile::exists(new_file_path) && QFile::remove(new_file_path) &&
+                QFile::copy(fullfilepath, new_file_path)) {
+                // overwrote the stale file successfully
+            } else {
+                DiscardResourceRegistration(resource);
+                return NULL;
+            }
         }
         QFile::setPermissions(new_file_path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                              QFileDevice::ReadUser | QFileDevice::WriteUser |
