@@ -25,6 +25,7 @@ import sys
 import os
 import re
 import shutil
+import stat
 import datetime
 import time
 import io
@@ -418,7 +419,8 @@ def generate_epub_from_tag(localRepo, bookid, tagname, filename, dest_path):
     cdir = os.getcwd()
     # first verify both repo and tagname exist
     epub_filepath = ""
-    epub_name = filename + "_" + tagname + ".epub"
+    # Use original filename without appending tagname to avoid name accumulation
+    epub_name = filename + ".epub"
     taglst = []
     if os.path.exists(repo_path):
         os.chdir(repo_path)
@@ -432,7 +434,7 @@ def generate_epub_from_tag(localRepo, bookid, tagname, filename, dest_path):
         # FIXME: there should **never** be unstaged changes or untracked files
         # in the repo because of how Sigil handles it, but we really should use
         # dulwich status to verify that before proceeding and abort otherwise.
-        # Just in case the user uses command line git to manipulate the repo 
+        # Just in case the user uses command line git to manipulate the repo
         # outside of Sigil's control leaving it in a dirty state
 
         # Instead of cloning an entire repo just to do a checkout
@@ -574,6 +576,16 @@ def performCommit(localRepo, bookid, bookinfo, bookroot, bookfiles):
     return ''
 
 
+def _clear_readonly(path):
+    # git object files are stored read-only, which makes unlink fail on Windows
+    for root, dirs, files in os.walk(path):
+        for name in dirs + files:
+            try:
+                os.chmod(os.path.join(root, name), stat.S_IWRITE)
+            except Exception:
+                pass
+
+
 def eraseRepo(localRepo, bookid):
     repo_home = pathof(localRepo)
     repo_home = repo_home.replace("/", os.sep)
@@ -582,6 +594,7 @@ def eraseRepo(localRepo, bookid):
     cdir = os.getcwd()
     if os.path.exists(repo_path):
         try:
+            _clear_readonly(repo_path)
             shutil.rmtree(repo_path)
         except Exception as e:
             print("repo erasure failed")

@@ -361,6 +361,8 @@ set( MISC_FILES
     Misc/QCodePage437Codec.h
     Misc/SearchOperations.cpp
     Misc/SearchOperations.h
+    Misc/SearchBatchRunner.cpp
+    Misc/SearchBatchRunner.h
     Misc/SigilDarkStyle.cpp
     Misc/SigilDarkStyle.h
     Misc/Language.cpp
@@ -368,6 +370,8 @@ set( MISC_FILES
     Misc/DescriptiveInfo.h
     Misc/GuideItems.h
     Misc/GuideItems.cpp
+    Misc/ImagePreviewService.cpp
+    Misc/ImagePreviewService.h
     Misc/Landmarks.h
     Misc/Landmarks.cpp
     Misc/MarcRelators.cpp
@@ -464,12 +468,18 @@ set( VIEW_EDITOR_FILES
 set( MAINUI_FILES
     MainUI/MainApplication.cpp
     MainUI/MainApplication.h
+    MainUI/BatchUndoManager.cpp
+    MainUI/BatchUndoManager.h
     MainUI/MainWindow.cpp
     MainUI/MainWindow.h
     MainUI/FindReplace.cpp
     MainUI/FindReplace.h
+    MainUI/SearchBatchCoordinator.cpp
+    MainUI/SearchBatchCoordinator.h
     MainUI/BookBrowser.cpp
     MainUI/BookBrowser.h
+    MainUI/BookBrowserTreeView.cpp
+    MainUI/BookBrowserTreeView.h
     MainUI/ClipsWindow.cpp
     MainUI/ClipsWindow.h
     MainUI/PreviewWindow.cpp

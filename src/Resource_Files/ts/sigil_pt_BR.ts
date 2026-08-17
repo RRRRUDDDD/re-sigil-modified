@@ -2571,6 +2571,11 @@ Você também pode usar a tecla de seta à direita.</translation>
         <source>Collapse All</source>
         <translation>Fechar Todos</translation>
     </message>
+    <message>
+        <location filename="../../Dialogs/EditTOC.cpp" line="529"/>
+        <source>[placeholder]</source>
+        <translation>[espaço reservado]</translation>
+    </message>
 </context>
 <context>
     <name>EmbeddedPython</name>
@@ -8572,6 +8577,16 @@ Folhas de estilos que são listadas primeiro tem precedência sobre as demais.</
         <translation>Configurar extensões 2</translation>
     </message>
     <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 3</source>
+        <translation>Configurar extensões 3</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 4</source>
+        <translation>Configurar extensões 4</translation>
+    </message>
+    <message>
         <location filename="../../Form_Files/main.ui" line="635"/>
         <source>Automation Lists</source>
         <translation>Listas de Automatização</translation>
@@ -10816,6 +10831,56 @@ Folhas de estilos que são listadas primeiro tem precedência sobre as demais.</
         <location filename="../../Form_Files/main.ui" line="2878"/>
         <source>Run Plugin 10</source>
         <translation>Executar extensão 10</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 11</source>
+        <translation>Executar extensão 11</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 12</source>
+        <translation>Executar extensão 12</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 13</source>
+        <translation>Executar extensão 13</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 14</source>
+        <translation>Executar extensão 14</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 15</source>
+        <translation>Executar extensão 15</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 16</source>
+        <translation>Executar extensão 16</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 17</source>
+        <translation>Executar extensão 17</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 18</source>
+        <translation>Executar extensão 18</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 19</source>
+        <translation>Executar extensão 19</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 20</source>
+        <translation>Executar extensão 20</translation>
     </message>
     <message>
         <location filename="../../Form_Files/main.ui" line="2887"/>
@@ -16528,6 +16593,56 @@ Tem certeza que deseja continuar?</translation>
         <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
         <source>Plugin 10:</source>
         <translation>Extensão 10:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 11:</source>
+        <translation>Extensão 11:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 12:</source>
+        <translation>Extensão 12:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 13:</source>
+        <translation>Extensão 13:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 14:</source>
+        <translation>Extensão 14:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 15:</source>
+        <translation>Extensão 15:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 16:</source>
+        <translation>Extensão 16:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 17:</source>
+        <translation>Extensão 17:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 18:</source>
+        <translation>Extensão 18:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 19:</source>
+        <translation>Extensão 19:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 20:</source>
+        <translation>Extensão 20:</translation>
     </message>
     <message>
         <location filename="../../Dialogs/PreferenceWidgets/PluginWidget.cpp" line="209"/>

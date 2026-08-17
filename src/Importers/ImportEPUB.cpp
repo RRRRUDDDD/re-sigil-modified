@@ -653,7 +653,7 @@ void ImportEPUB::ReadOPF()
             continue;
         }
 
-        // ĞŞ¸Ä£ºµ÷Õû if else Ë³Ğò£¬³£ÓÃµÄÌáµ½Ç°Ãæ£¬Ìá¸ßĞ§ÂÊ
+        // ä¿®æ”¹ï¼šè°ƒæ•´ if else é¡ºåºï¼Œå¸¸ç”¨çš„æåˆ°å‰é¢ï¼Œæé«˜æ•ˆç‡
 
         // Get the list of content files that
         // make up the publication

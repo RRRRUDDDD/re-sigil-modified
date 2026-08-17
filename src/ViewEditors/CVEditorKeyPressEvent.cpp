@@ -7,6 +7,7 @@
 #include <QBuffer>
 #include <QFileInfo>
 #include <QImage>
+#include <QKeySequence>
 #include "ViewEditors/CodeViewEditor.h"
 #include "BookManipulation/Book.h"
 #include "BookManipulation/FolderKeeper.h"
@@ -33,6 +34,18 @@ inline void CodeViewEditor::insertTextAtCursor(QString text, QTextCursor cursor)
 
 void CodeViewEditor::keyPressEvent(QKeyEvent* event)
 {
+    MainWindow *main_window = qobject_cast<MainWindow *>(window());
+    if (main_window && event->matches(QKeySequence::Undo)) {
+        QMetaObject::invokeMethod(main_window, "UndoAction", Qt::DirectConnection);
+        event->accept();
+        return;
+    }
+    if (main_window && event->matches(QKeySequence::Redo)) {
+        QMetaObject::invokeMethod(main_window, "RedoAction", Qt::DirectConnection);
+        event->accept();
+        return;
+    }
+
     if (m_hightype == CodeViewEditor::Highlight_XHTML) {
         if (VisibleCompleterEvent(event)) return;
         if (CommonKeyPressEvent(event)) return;

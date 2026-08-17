@@ -257,7 +257,7 @@ public:
 
     static QString trimmed(const QString& text, const QString& chars);
 
-    static QStringList walkDirs(QString root);//modified: used by correctOPF°¢walk direct files;
+    static QStringList walkDirs(QString root);//modified: used by correctOPF„ÄÅwalk direct files;
 
     static QString ExtToMTypeMap(QString& ext);
 

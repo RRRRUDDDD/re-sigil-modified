@@ -1502,7 +1502,7 @@ QString Utility::trimmed(const QString& text, const QString& chars) {
 }
 //----------------------------------------------------------------------------
 
-//------------modified: used by correctOPF��walk direct files----------------------------------
+//------------modified: used by correctOPF to walk direct files----------------------------------
 QStringList Utility::walkDirs(QString root) {
     QDir* dirinfo = new QDir(root);
     if (!dirinfo->exists()) {
@@ -1578,19 +1578,19 @@ QString Utility::ExtToMTypeMap(QString& ext)
 }
 //--------------------------------------------------------------------------------------------
 
-//------------------------�޸ģ����ߣ��ַ���ǰ��˷ǿ��ַ�λ��-----------------------------------
-// �ú������ڽ�ȡ�ַ���ǰ�����˷ǿհ��ַ���λ�ã��հ��ַ�ָ�ո�����Ʊ�����
-// �����ص���һ��λ�����֣�����ǰ�˷ǿհ��ַ�����ʼλ�úͺ�˷ǿհ��ַ��Ľ�ֹλ�á�
+//------------------------修改：查找字符串前后非空白字符位置-----------------------------------
+// 此函数用于查找字符串前后非空白字符的位置，空白字符指空格和制表符。
+// 返回一个位置数组，包含前后非空白字符的起始位置和结束位置。
 Utility::TrimmedIndex Utility::StringTrimmedIndex(const QString& text) {
 
     if (text.size() == 0) {
         return {0,0};
     }
-    // s_index ����ǰ�˷ǿհ��ַ���ʼλ�ã�e_index������˷ǿհ��ַ���ֹλ�á�
-    // ��� ����ʱ s_index �� e_index ��Ϊ 0 ��˵�����ַ���Ϊ�ա����s_index ���� e_index ˵�����ַ����ɴ��հ��ַ���ɡ�
+    // s_index 表示前导非空白字符的起始位置；e_index 表示尾部非空白字符的结束位置。
+    // 如果函数返回时 s_index 和 e_index 都为 0，说明字符串为空；如果 s_index 大于 e_index，说明字符串由空白字符组成。
     int s_index = 0, e_index = text.size();
     for (int i = 0; i < text.size(); i++) {
-        // 0x20 �ո� 0x9 �Ʊ���\t
+        // 0x20 空格，0x9 制表符 \t
         if (text[i] == QChar(0x20) || text[i] == QChar(0x9)) {
             ++s_index;
             continue;

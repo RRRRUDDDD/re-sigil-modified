@@ -92,9 +92,9 @@ bool XhtmlFormatEditor::CommonKeyPressEvent(QKeyEvent* event) {
                         new_text += fragment.right(fragment.length() - sub_num) + QChar(0x2029);
                     }
                 }
-                //ĞŞ¸ÄÎÄµµ
+                //ä¿®æ”¹æ–‡æ¡£
                 insertTextAtCursor(new_text.left(new_text.length() - 1), cursor);
-                //¸´Ô­¹â±ê¼°Ñ¡Ôñ·¶Î§
+                //å¤åŸå…‰æ ‡åŠé€‰æ‹©èŒƒå›´
                 cursor.setPosition(selection_start);
                 cursor.setPosition(ori_end + e_offset, QTextCursor::KeepAnchor);
                 setTextCursor(cursor);
@@ -191,7 +191,7 @@ bool XhtmlFormatEditor::CssViewKeyPressEvent(QKeyEvent* event)
             QString trimmed_text = Utility::trimmed(textLeftOfCursor, " \t");
             int indent_len = Utility::StringTrimmedIndex(textLeftOfCursor).before;
             QString insert_text = "";
-            if (ori_pos <= line_start + indent_len) { // ¹â±êÎ»ÓÚËõ½ø¿Õ°×·ûÎ»ÖÃ
+            if (ori_pos <= line_start + indent_len) { // å…‰æ ‡ä½äºç¼©è¿›ç©ºç™½ç¬¦ä½ç½®
                 //cursor.setPosition(ori_pos);
                 insert_text = textLeftOfCursor + QChar(0x2029) + textLeftOfCursor;
                 insertTextAtCursor(insert_text, cursor);
@@ -240,7 +240,7 @@ bool XhtmlFormatEditor::CssViewKeyPressEvent(QKeyEvent* event)
             }
             return true;
         }
-        else if (event->key() == Qt::Key_BraceLeft) { // ¼ì²âµ½×ó»¨À¨ºÅ "{" ÊäÈë
+        else if (event->key() == Qt::Key_BraceLeft) { // æ£€æµ‹åˆ°å·¦èŠ±æ‹¬å· "{" è¾“å…¥
             cursor.movePosition(QTextCursor::EndOfWord);
             if (cursor.position() == ori_pos) {
                 insertTextAtCursor("{}", cursor);
@@ -250,7 +250,7 @@ bool XhtmlFormatEditor::CssViewKeyPressEvent(QKeyEvent* event)
             }
             return false;
         }
-        else if (event->key() == Qt::Key_BraceRight) { // ¼ì²âµ½ÓÒ»¨À¨ºÅ "}" ÊäÈë
+        else if (event->key() == Qt::Key_BraceRight) { // æ£€æµ‹åˆ°å³èŠ±æ‹¬å· "}" è¾“å…¥
             cursor.select(QTextCursor::Document);
             const QString& source = cursor.selectedText();
             int indexOfLineWithLBrace = getIndexOfLineWithLBrace(source, ori_pos);

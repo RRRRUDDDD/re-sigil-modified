@@ -2574,6 +2574,11 @@ U kunt ook de rechter pijltoets gebruiken.</translation>
         <source>Collapse All</source>
         <translation>Alles samenvouwen</translation>
     </message>
+    <message>
+        <location filename="../../Dialogs/EditTOC.cpp" line="529"/>
+        <source>[placeholder]</source>
+        <translation type="unfinished"/>
+    </message>
 </context>
 <context>
     <name>EmbeddedPython</name>
@@ -8525,6 +8530,16 @@ Stijlbladen die eerst vermeld staan hebben voorrang boven latere stijlbladen.</t
         <translation>Plug-ins groep 2</translation>
     </message>
     <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 3</source>
+        <translation>Plug-ins groep 3</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 4</source>
+        <translation>Plug-ins groep 4</translation>
+    </message>
+    <message>
         <location filename="../../Form_Files/main.ui" line="635"/>
         <source>Automation Lists</source>
         <translation>Automatiseringslijsten</translation>
@@ -10762,6 +10777,56 @@ style=&quot;margin-left: 0.5em;&quot;&gt;De geselecteerde tekst doorhalen.&lt;/p
         <location filename="../../Form_Files/main.ui" line="2878"/>
         <source>Run Plugin 10</source>
         <translation>Plug-in 10 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 11</source>
+        <translation>Plug-in 11 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 12</source>
+        <translation>Plug-in 12 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 13</source>
+        <translation>Plug-in 13 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 14</source>
+        <translation>Plug-in 14 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 15</source>
+        <translation>Plug-in 15 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 16</source>
+        <translation>Plug-in 16 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 17</source>
+        <translation>Plug-in 17 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 18</source>
+        <translation>Plug-in 18 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 19</source>
+        <translation>Plug-in 19 uitvoeren</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 20</source>
+        <translation>Plug-in 20 uitvoeren</translation>
     </message>
     <message>
         <location filename="../../Form_Files/main.ui" line="2887"/>
@@ -16519,6 +16584,56 @@ Weet u zeker dat u wilt doorgaan?</translation>
         <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
         <source>Plugin 10:</source>
         <translation>Plug-in 10:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 11:</source>
+        <translation>Plug-in 11:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 12:</source>
+        <translation>Plug-in 12:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 13:</source>
+        <translation>Plug-in 13:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 14:</source>
+        <translation>Plug-in 14:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 15:</source>
+        <translation>Plug-in 15:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 16:</source>
+        <translation>Plug-in 16:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 17:</source>
+        <translation>Plug-in 17:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 18:</source>
+        <translation>Plug-in 18:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 19:</source>
+        <translation>Plug-in 19:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 20:</source>
+        <translation>Plug-in 20:</translation>
     </message>
     <message>
         <location filename="../../Dialogs/PreferenceWidgets/PluginWidget.cpp" line="209"/>

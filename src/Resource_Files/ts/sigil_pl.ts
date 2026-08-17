@@ -2573,6 +2573,11 @@ Możesz również użyć klawisza strzałki w prawo.</translation>
         <source>Collapse All</source>
         <translation>Zwiń wszystkie</translation>
     </message>
+    <message>
+        <location filename="../../Dialogs/EditTOC.cpp" line="529"/>
+        <source>[placeholder]</source>
+        <translation>[tekst_zastępczy]</translation>
+    </message>
 </context>
 <context>
     <name>EmbeddedPython</name>
@@ -8538,6 +8543,16 @@ Arkusze stylów, które są pierwsze na liście, mają pierwszeństwo przed pó�
         <translation>Wtyczki zestaw 2</translation>
     </message>
     <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 3</source>
+        <translation>Wtyczki zestaw 3</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 4</source>
+        <translation>Wtyczki zestaw 4</translation>
+    </message>
+    <message>
         <location filename="../../Form_Files/main.ui" line="635"/>
         <source>Automation Lists</source>
         <translation>Listy automatyzacji</translation>
@@ -10781,6 +10796,56 @@ Tworzy nowy dokument ePub3.&lt;/p&gt;</translation>
         <location filename="../../Form_Files/main.ui" line="2878"/>
         <source>Run Plugin 10</source>
         <translation>Uruchom wtyczkę 10</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 11</source>
+        <translation>Uruchom wtyczkę 11</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 12</source>
+        <translation>Uruchom wtyczkę 12</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 13</source>
+        <translation>Uruchom wtyczkę 13</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 14</source>
+        <translation>Uruchom wtyczkę 14</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 15</source>
+        <translation>Uruchom wtyczkę 15</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 16</source>
+        <translation>Uruchom wtyczkę 16</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 17</source>
+        <translation>Uruchom wtyczkę 17</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 18</source>
+        <translation>Uruchom wtyczkę 18</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 19</source>
+        <translation>Uruchom wtyczkę 19</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 20</source>
+        <translation>Uruchom wtyczkę 20</translation>
     </message>
     <message>
         <location filename="../../Form_Files/main.ui" line="2887"/>
@@ -16492,6 +16557,56 @@ Czy na pewno kontynuować?</translation>
         <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
         <source>Plugin 10:</source>
         <translation>Wtyczka 10:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 11:</source>
+        <translation>Wtyczka 11:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 12:</source>
+        <translation>Wtyczka 12:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 13:</source>
+        <translation>Wtyczka 13:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 14:</source>
+        <translation>Wtyczka 14:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 15:</source>
+        <translation>Wtyczka 15:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 16:</source>
+        <translation>Wtyczka 16:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 17:</source>
+        <translation>Wtyczka 17:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 18:</source>
+        <translation>Wtyczka 18:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 19:</source>
+        <translation>Wtyczka 19:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 20:</source>
+        <translation>Wtyczka 20:</translation>
     </message>
     <message>
         <location filename="../../Dialogs/PreferenceWidgets/PluginWidget.cpp" line="209"/>

@@ -801,7 +801,7 @@ bool PluginRunner::checkIsWellFormed()
 bool PluginRunner::deleteFiles(const QStringList &files)
 {
     QList <Resource *> tabResources=m_tabManager->GetTabResources();
-    QList <Resource*> resourcesToBeDeleted;   //ÐÞ¸Ä£ºÅúÁ¿É¾³ý
+    QList <Resource*> resourcesToBeDeleted;   //ä¿®æ”¹ï¼šæ‰¹é‡åˆ é™¤
     bool changes_made = false;
     ui.statusLbl->setText(tr("Status: cleaning up - deleting files"));
     foreach (QString fileinfo, files) {
@@ -856,10 +856,10 @@ bool PluginRunner::deleteFiles(const QStringList &files)
             if (tabResources.contains(resource)) {
                 m_tabManager->CloseTabForResource(resource);
             }
-            // -------------------------- ÐÞ¸Ä£ºÅúÁ¿É¾³ý --------------------------
+            // -------------------------- ä¿®æ”¹ï¼šæ‰¹é‡åˆ é™¤ --------------------------
             //m_book->GetFolderKeeper()->RemoveResource(resource); 
             //resource->Delete(); 
-            resourcesToBeDeleted << resource;    // ½«ÎÄ¼þÌí¼Óµ½´ýÉ¾³ý×é
+            resourcesToBeDeleted << resource;    // å°†æ–‡ä»¶æ·»åŠ åˆ°å¾…åˆ é™¤ç»„
             // -------------------------------------------------------------------
             changes_made = true;
         } else {
@@ -873,7 +873,7 @@ bool PluginRunner::deleteFiles(const QStringList &files)
            }
         }
     }
-    m_book->GetFolderKeeper()->BulkRemoveResources(resourcesToBeDeleted); //ÐÞ¸Ä£ºÅúÁ¿É¾³ý
+    m_book->GetFolderKeeper()->BulkRemoveResources(resourcesToBeDeleted); //ä¿®æ”¹ï¼šæ‰¹é‡åˆ é™¤
     if (changes_made) {
         m_bookBrowser->ResourcesDeleted();
     }

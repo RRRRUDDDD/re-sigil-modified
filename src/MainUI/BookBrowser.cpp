@@ -43,6 +43,7 @@
 #include "Dialogs/RETable.h"
 #include "Importers/ImportHTML.h"
 #include "MainUI/BookBrowser.h"
+#include "MainUI/BookBrowserTreeView.h"
 #include "MainUI/MainWindow.h"
 #include "MainUI/OPFModel.h"
 #include "Misc/FilenameDelegate.h"
@@ -82,7 +83,7 @@ BookBrowser::BookBrowser(QWidget *parent)
     :
     QDockWidget(tr("Book Browser"), parent),
     m_Book(NULL),
-    m_TreeView(new QTreeView(this)),
+    m_TreeView(new BookBrowserTreeView(this)),
     m_OPFModel(new OPFModel(this)),
     m_ContextMenu(new QMenu(this)),
     m_FontObfuscationContextMenu(new QMenu(this)),

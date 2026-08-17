@@ -39,6 +39,7 @@
 #include "Dialogs/SpellcheckEditor.h"
 #include "Dialogs/ViewImage.h"
 #include "MainUI/FindReplace.h"
+#include "MainUI/BatchUndoManager.h"
 #include "MainUI/TOCModel.h"
 #include "Parsers/CSSInfo.h"
 #include "Misc/PasteTarget.h"
@@ -72,6 +73,8 @@ class ClipsWindow;
 class SelectCharacter;
 class ViewImage;
 class FlowTab;
+class TextResource;
+class HTMLResource;
 
 
 /**
@@ -127,6 +130,14 @@ public:
      * @return A shared pointer to the book.
      */
     QSharedPointer<Book> GetCurrentBook();
+
+    /**
+     * Registers a completed cross-file text edit as one undoable group.
+     */
+    void RegisterBatchUndoGroup(const QList<TextResource *> &changed_resources);
+    void RegisterBatchUndoGroup(const QList<HTMLResource *> &changed_resources);
+    bool HasManagedUndo() const;
+    bool HasManagedRedo() const;
 
 
     /**
@@ -357,6 +368,9 @@ private slots:
     void Exit();
 
     void ShowMessageOnStatusBar(const QString &message = "", int millisecond_duration = STATUSBAR_MSG_DISPLAY_TIME);
+
+    void UndoAction();
+    void RedoAction();
 
     void ShowLastOpenFileWarnings();
 
@@ -693,6 +707,28 @@ private slots:
     void unloadPluginsMenu();
 
 private:
+    bool CreateRepoCheckpoint();
+
+    /**
+     * Returns the id that keys this window's checkpoint repository.
+     * The id lives only in this session and is never written into the book's
+     * OPF, so creating a checkpoint can never modify the epub being edited.
+     * Returns an empty string when no checkpoint has been taken yet and
+     * create_if_missing is false.
+     */
+    QString GetCheckpointBookId(bool create_if_missing = false);
+
+    /**
+     * Deletes the checkpoint repository created during this session, so that
+     * checkpoints never survive closing the book or leaving Sigil.
+     */
+    void EraseSessionCheckpointRepo();
+
+    /**
+     * Removes the temporary epubs generated when restoring/comparing checkpoints.
+     */
+    void CleanCheckpointCheckoutCache();
+
     void createJumpList();
     void updateToolTipsOnPluginIcons();
     void UpdateClipButton(QAction *ui_action);
@@ -902,9 +938,23 @@ private:
     QString m_CurrentFileName;
 
     /**
+     * Session private id of the checkpoint repository of the current book.
+     * Empty until the first checkpoint of this session is taken.
+     */
+    QString m_CheckpointBookId;
+
+    /**
+     * True while a book is being reloaded from one of its own checkpoints,
+     * which must keep the checkpoint repository of the running session alive.
+     */
+    bool m_PreserveCheckpointRepo;
+
+    /**
      * The book currently being worked on.
      */
     QSharedPointer<Book> m_Book;
+
+    BatchUndoManager m_BatchUndoManager;
 
     /**
      * The last folder from which the user opened or saved a file.

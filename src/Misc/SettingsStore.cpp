@@ -313,7 +313,7 @@ QStringList SettingsStore::pluginMap()
 {
     clearSettingsGroup();
     QStringList EmptyMap = QStringList();
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < PLUGIN_SLOT_COUNT; i++) { // modified: plugin slots 20
         EmptyMap.append("");
     }
     return value(KEY_PLUGIN_USER_MAP, EmptyMap).toStringList();

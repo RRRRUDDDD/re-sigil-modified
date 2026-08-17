@@ -2572,6 +2572,11 @@ You can also use the right arrow key.</source>
         <source>Collapse All</source>
         <translation>Скупи све</translation>
     </message>
+    <message>
+        <location filename="../../Dialogs/EditTOC.cpp" line="529"/>
+        <source>[placeholder]</source>
+        <translation>[чувар места]</translation>
+    </message>
 </context>
 <context>
     <name>EmbeddedPython</name>
@@ -8534,6 +8539,16 @@ Stylesheets that are listed first take precedence over later stylesheets.</sourc
         <translation>Додаци скуп 2</translation>
     </message>
     <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 3</source>
+        <translation>Додаци скуп 3</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="619"/>
+        <source>Plugins Set 4</source>
+        <translation>Додаци скуп 4</translation>
+    </message>
+    <message>
         <location filename="../../Form_Files/main.ui" line="635"/>
         <source>Automation Lists</source>
         <translation>Листе аутоматизације</translation>
@@ -10779,6 +10794,56 @@ Stylesheets that are listed first take precedence over later stylesheets.</sourc
         <location filename="../../Form_Files/main.ui" line="2878"/>
         <source>Run Plugin 10</source>
         <translation>Покрени Додатак 10</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 11</source>
+        <translation>Покрени Додатак 11</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 12</source>
+        <translation>Покрени Додатак 12</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 13</source>
+        <translation>Покрени Додатак 13</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 14</source>
+        <translation>Покрени Додатак 14</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 15</source>
+        <translation>Покрени Додатак 15</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 16</source>
+        <translation>Покрени Додатак 16</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 17</source>
+        <translation>Покрени Додатак 17</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 18</source>
+        <translation>Покрени Додатак 18</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 19</source>
+        <translation>Покрени Додатак 19</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/main.ui" line="2878"/>
+        <source>Run Plugin 20</source>
+        <translation>Покрени Додатак 20</translation>
     </message>
     <message>
         <location filename="../../Form_Files/main.ui" line="2887"/>
@@ -16491,6 +16556,56 @@ Are you Sure You Want to Continue?</source>
         <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
         <source>Plugin 10:</source>
         <translation>Додатак 10:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 11:</source>
+        <translation>Додатак 11:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 12:</source>
+        <translation>Додатак 12:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 13:</source>
+        <translation>Додатак 13:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 14:</source>
+        <translation>Додатак 14:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 15:</source>
+        <translation>Додатак 15:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 16:</source>
+        <translation>Додатак 16:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 17:</source>
+        <translation>Додатак 17:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 18:</source>
+        <translation>Додатак 18:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 19:</source>
+        <translation>Додатак 19:</translation>
+    </message>
+    <message>
+        <location filename="../../Form_Files/PPluginWidget.ui" line="376"/>
+        <source>Plugin 20:</source>
+        <translation>Додатак 20:</translation>
     </message>
     <message>
         <location filename="../../Dialogs/PreferenceWidgets/PluginWidget.cpp" line="209"/>

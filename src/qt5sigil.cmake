@@ -13,7 +13,7 @@ else()
     set(QT5_NEEDED 5.12)
 endif()
 
-set( PKGS_TO_FIND Core Network WebEngine WebEngineWidgets Widgets Xml Concurrent PrintSupport LinguistTools )
+set( PKGS_TO_FIND Core Network WebEngine WebEngineWidgets Widgets Xml Svg Concurrent PrintSupport LinguistTools )
 if ( WIN32 )
     list( APPEND PKGS_TO_FIND WinExtras )
     if ( USE_ALT_ICONS )
@@ -220,7 +220,7 @@ endif()
 
 # No need to explicity link Qt5::WinMain or to use the qt5_use_modules macro since CMAKE 2.8.11. We require CMAKE 3.0.0
 set( LIBS_TO_LINK ${HUNSPELL_LIBRARIES} ${PCRE2_LIBRARIES} ${GUMBO_LIBRARIES} ${MINIZIP_LIBRARIES}
-                  Qt5::Widgets  Qt5::Xml  Qt5::PrintSupport  Qt5::WebEngine  
+                  Qt5::Widgets  Qt5::Xml  Qt5::Svg  Qt5::PrintSupport  Qt5::WebEngine
                   Qt5::WebEngineWidgets  Qt5::Network  Qt5::Concurrent )
 if (${USE_NEWER_FINDPYTHON3})
     set( _BUNDLED_PYVER "${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}" )

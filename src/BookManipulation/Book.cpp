@@ -752,28 +752,83 @@ bool Book::RenameClassInHTMLFileMapped(HTMLResource* html_resource,
 }
 
 
-void Book::ReformatAllHTML(bool to_valid)
+QList<HTMLResource *> Book::ReformatAllHTML(bool to_valid)
 {
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
     SaveAllResourcesToDisk();
     QList<HTMLResource *> html_resources = m_Mainfolder->GetResourceTypeList<HTMLResource>(true);
+    QList<CleanSource::ReformatResult> staged_results;
     //--------------------------------------------------modified: Prettify xhtml----------------------------------------------
     //bool book_modified = CleanSource::ReformatAll(html_resources, to_valid ? CleanSource::Mend : CleanSource::MendPrettify);
     bool book_modified;
     if (to_valid) {
-        book_modified = CleanSource::ReformatAll(html_resources, CleanSource::Mend);
+        book_modified = CleanSource::ReformatAll(html_resources, CleanSource::Mend, &staged_results);
     }
     else {
         SettingsStoreExtend settings_ext;
         XhtmlFormatParser xfparser(settings_ext.getXhtmlFormat());
-        book_modified = CleanSource::ReformatAllWithParser(html_resources, xfparser);
+        book_modified = CleanSource::ReformatAllWithParser(html_resources, xfparser, &staged_results);
     }
     //------------------------------------------------------------------------------------------------------------------------
+    QList<HTMLResource *> changed_resources;
     if (book_modified) {
+        // Validate every snapshot before the first write so a concurrent
+        // resource update cannot leave a partially reformatted book.
+        bool snapshots_match = true;
+        for (const CleanSource::ReformatResult &result : staged_results) {
+            if (result.resource == nullptr) {
+                snapshots_match = false;
+                break;
+            }
+            QReadLocker locker(&result.resource->GetLock());
+            if (result.resource->GetText() != result.originalText) {
+                snapshots_match = false;
+                break;
+            }
+        }
+
+        if (snapshots_match) {
+            QList<const CleanSource::ReformatResult *> committed_results;
+            bool commit_succeeded = true;
+            for (const CleanSource::ReformatResult &result : staged_results) {
+                QWriteLocker locker(&result.resource->GetLock());
+                if (result.resource->GetText() != result.originalText) {
+                    commit_succeeded = false;
+                    break;
+                }
+                if (!result.resource->SetTextAsUndoableEdit(result.reformattedText)) {
+                    if (result.resource->GetText() != result.originalText &&
+                        (!result.resource->UndoLastEdit() ||
+                         result.resource->GetText() != result.originalText)) {
+                        result.resource->SetText(result.originalText);
+                    }
+                    commit_succeeded = false;
+                    break;
+                }
+                committed_results.append(&result);
+            }
+            if (!commit_succeeded) {
+                for (auto it = committed_results.crbegin(); it != committed_results.crend(); ++it) {
+                    const CleanSource::ReformatResult *result = *it;
+                    QWriteLocker rollback_locker(&result->resource->GetLock());
+                    if (!result->resource->UndoLastEdit() ||
+                        result->resource->GetText() != result->originalText) {
+                        result->resource->SetText(result->originalText);
+                    }
+                }
+                committed_results.clear();
+            }
+            for (const CleanSource::ReformatResult *result : committed_results) {
+                changed_resources.append(result->resource);
+            }
+        }
+    }
+    if (!changed_resources.isEmpty()) {
         SetModified();
     }
     QApplication::restoreOverrideCursor();
+    return changed_resources;
 }
 
 

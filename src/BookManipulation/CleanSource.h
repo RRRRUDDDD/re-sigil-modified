@@ -34,6 +34,12 @@ class CleanSource
 {
 
 public:
+    struct ReformatResult {
+        HTMLResource *resource = nullptr;
+        QString originalText;
+        QString reformattedText;
+    };
+
     // Performs minimal mending to provided book XHTML code 
     static QString Mend(const QString &source, const QString &version);
 
@@ -55,9 +61,17 @@ public:
 
     static QString CharToEntity(const QString &source, const QString &version);
 
-    static bool ReformatAll(QList <HTMLResource *> resources, QString(clean_fun)(const QString &source, const QString &version));
+    static bool ReformatAll(QList <HTMLResource *> resources,
+                            QString(clean_fun)(const QString &source, const QString &version),
+                            QList<ReformatResult> *results);
 
-    static bool ReformatAllWithParser(QList <HTMLResource*> resources, XhtmlFormatParser& xfparser);// modified: Prettify xhtml
+    // Legacy save-time caller retaining direct-write behavior.
+    static bool ReformatAll(QList <HTMLResource *> resources,
+                            QString(clean_fun)(const QString &source, const QString &version));
+
+    static bool ReformatAllWithParser(QList <HTMLResource*> resources,
+                                      XhtmlFormatParser& xfparser,
+                                      QList<ReformatResult> *results);// modified: Prettify xhtml
 
     /** 
      * neither svg nor math tags need a namespace prefix defined

@@ -24,7 +24,9 @@
 
 #include <QtCore/QString>
 #include <QtCore/QStringList>
+#include <QtCore/QReadLocker>
 #include <QtCore/QWriteLocker>
+#include <QtCore/QEventLoop>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
@@ -304,59 +306,107 @@ QString CleanSource::CharToEntity(const QString &source, const QString &version)
 }
 
 
-bool CleanSource::ReformatAll(QList <HTMLResource *> resources, QString(clean_func)(const QString &source, const QString &version))
+bool CleanSource::ReformatAll(QList <HTMLResource *> resources,
+                              QString(clean_func)(const QString &source, const QString &version),
+                              QList<ReformatResult> *results)
 {
     QProgressDialog progress(QObject::tr("Cleaning..."), 0, 0, resources.count(), Utility::GetMainWindow());
+    progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(PROGRESS_BAR_MINIMUM_DURATION);
     int progress_value = 0;
     progress.setValue(progress_value);
     bool book_modified = false;
+    if (results) {
+        results->clear();
+    }
 
     foreach(HTMLResource * resource, resources) {
         progress.setValue(progress_value++);
-        qApp->processEvents();
-        QWriteLocker locker(&resource->GetLock());
-        QString source = resource->GetText();
+        qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+        QString source;
+        {
+            QReadLocker locker(&resource->GetLock());
+            source = resource->GetText();
+        }
         QString version = resource->GetEpubVersion();
         QString newsource = clean_func(source, version);
         if (newsource != source) {
             book_modified = true;
-            resource->SetText(newsource);
+            if (results) {
+                ReformatResult result;
+                result.resource = resource;
+                result.originalText = source;
+                result.reformattedText = newsource;
+                results->append(result);
+            }
         }
     }
     return book_modified;
 }
 
+bool CleanSource::ReformatAll(QList <HTMLResource *> resources,
+                              QString(clean_fun)(const QString &source, const QString &version))
+{
+    QList<ReformatResult> results;
+    const bool book_modified = ReformatAll(resources, clean_fun, &results);
+    for (const ReformatResult &result : results) {
+        if (result.resource == nullptr) {
+            continue;
+        }
+        QWriteLocker locker(&result.resource->GetLock());
+        result.resource->SetText(result.reformattedText);
+    }
+    return book_modified;
+}
+
 // --------------- modified: Prettify xhtml ---------------------------
-bool CleanSource::ReformatAllWithParser(QList <HTMLResource*> resources, XhtmlFormatParser& xfparser)
+bool CleanSource::ReformatAllWithParser(QList <HTMLResource*> resources,
+                                        XhtmlFormatParser& xfparser,
+                                        QList<ReformatResult> *results)
 {
     QProgressDialog progress(QObject::tr("Cleaning..."), 0, 0, resources.count(), Utility::GetMainWindow());
+    progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(PROGRESS_BAR_MINIMUM_DURATION);
     int progress_value = 0;
     progress.setValue(progress_value);
-    bool check_error = false;
     bool book_modified = false;
+    if (results) {
+        results->clear();
+    }
 
-    HTMLResource *resource;
-    foreach(resource, resources) {
+    HTMLResource *invalid_resource = nullptr;
+    foreach(HTMLResource *resource, resources) {
         progress.setValue(progress_value++);
-        qApp->processEvents();
-        QWriteLocker locker(&resource->GetLock());
-        QString source = resource->GetText();
+        qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+        QString source;
+        {
+            QReadLocker locker(&resource->GetLock());
+            source = resource->GetText();
+        }
         if (!XhtmlDoc::IsDataWellFormed(source)) {
-            check_error = true;
+            invalid_resource = resource;
             break;
         }
         QString newsource = PrettifyXhtml(source, xfparser);
         if (newsource != source) {
             book_modified = true;
-            resource->SetText(newsource);
+            if (results) {
+                ReformatResult result;
+                result.resource = resource;
+                result.originalText = source;
+                result.reformattedText = newsource;
+                results->append(result);
+            }
         }
     }
     progress.close();
-    if (check_error) {
+    if (invalid_resource) {
+        if (results) {
+            results->clear();
+        }
         QMessageBox::warning(Utility::GetMainWindow(), QObject::tr("Sigil"),
-                             QObject::tr("Prettification cancelled: %1 is not well formed.").arg(resource->ShortPathName()));
+                             QObject::tr("Prettification cancelled: %1 is not well formed.").arg(invalid_resource->ShortPathName()));
+        return false;
     }
     return book_modified;
 }

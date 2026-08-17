@@ -321,7 +321,7 @@ void KeyboardShortcutsWidget::handleKeyEvent(QKeyEvent *event)
     if (result != 0) {
         // Dead keys (ie. diacritics should not be used in Keyboard Shortcuts
         if (isDeadKey) return;
-        //----------------------------修改：快捷键设置BUG：无法正确设置Return键的BUG-------------------------
+        //----------------------------淇敼锛氬揩鎹烽敭璁剧疆BUG锛氭棤娉曟纭缃甊eturn閿殑BUG-------------------------
         QString PortableText = QKeySequence(result | state).toString(QKeySequence::PortableText);
         if (result == 13) {
             PortableText = PortableText.replace(QChar(13), "Return");

@@ -42,11 +42,15 @@
 #include "Tabs/TextTab.h"
 #include "Tabs/FlowTab.h"
 #include "MainUI/FindReplace.h"
+#include "MainUI/SearchBatchCoordinator.h"
 #include "Misc/SettingsStore.h"
 #include "Misc/FindReplaceQLineEdit.h"
+#include "Misc/Utility.h"
+#include "PCRE2/PCRECache.h"
 #include "PCRE2/PCREErrors.h"
 #include "ResourceObjects/Resource.h"
 #include "ResourceObjects/TextResource.h"
+#include "ResourceObjects/HTMLResource.h"
 
 #define DBG if(0)
 
@@ -91,7 +95,7 @@ FindReplace::FindReplace(MainWindow *main_window)
       m_MinimalMatchCheckAction(nullptr),
       m_AutoTokeniseCheckAction(nullptr),
       m_menu(nullptr),
-      m_CF_RestartFlag(false) //ĞŞ¸Ä£ºÑ­»·²éÕÒBUG
+      m_CF_RestartFlag(false) // ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUG
 {
     ui.setupUi(this);
     FindReplaceQLineEdit *find_ledit = new FindReplaceQLineEdit(this);
@@ -306,7 +310,7 @@ void FindReplace::RestartClicked()
 {
     m_PreviousSearch.clear();
     m_RestartPerformed = true;
-    m_CF_RestartFlag = true;  // ĞŞ¸Ä£ºÑ­»·²éÕÒBUG£ºµ±Ç°Ò³Ãæ²éÕÒµÄÖØ¿ªÊ¼±êÖ¾
+    m_CF_RestartFlag = true;  // ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUGï¼Œå½“å‰é¡µé¢æŸ¥æ‰¾æ—¶é‡ç½®å¼€å§‹æ ‡å¿—
     ShowMessage(tr("Search will restart"));
 }
 
@@ -668,6 +672,7 @@ void FindReplace::ChooseReplacements()
     clearMessage();
 
     int count = rc.GetReplacementCount();
+    const QList<TextResource *> changed_resources = rc.GetChangedResources();
     if (count == 0) {
         ShowMessage(tr("No replacements made"));
     } else if (count > 0) {
@@ -676,6 +681,9 @@ void FindReplace::ChooseReplacements()
     }
 
     if (count > 0) {
+        if (!changed_resources.isEmpty()) {
+            m_MainWindow->RegisterBatchUndoGroup(changed_resources);
+        }
         // Signal that the contents have changed and update the view
         m_MainWindow->GetCurrentBook()->SetModified(true);
         m_MainWindow->GetCurrentContentTab()->ContentChangedExternally();
@@ -841,7 +849,7 @@ bool FindReplace::FindText(Searchable::Direction direction)
     // bool had_focus = HasFocus();
     SetCodeViewIfNeeded();
 
-    // ĞŞ¸Ä£ºÑ­»·²éÕÒBUG£ºµã¡°ÖØĞÂ²éÕÒ¡±Ê±ºöÂÔ²éÕÒÆ«ÒÆÖµ
+    // ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUGï¼Œç‚¹å‡»â€œé‡æ–°æŸ¥æ‰¾â€æ—¶æ¸…é™¤åç§»å€¼
     bool ignore_offset = false;
     if (m_CF_RestartFlag) {
         ignore_offset = true;
@@ -1165,10 +1173,15 @@ int FindReplace::ReplaceInAllFiles()
     QList<Resource *>search_files = GetFilesToSearch(true);
     if (search_files.isEmpty()) return 0;
 
+    QList<TextResource *> changed_resources;
     int count = SearchOperations::ReplaceInAllFIles(
                     GetSearchRegex(),
                     ui.cbReplace->lineEdit()->text(),
-                    search_files);
+                    search_files,
+                    &changed_resources);
+    if (!changed_resources.isEmpty()) {
+        m_MainWindow->RegisterBatchUndoGroup(changed_resources);
+    }
     return count;
 }
 
@@ -1208,16 +1221,16 @@ bool FindReplace::FindInAllFiles(Searchable::Direction direction)
     if (!found) {
         Resource *containing_resource = GetNextContainingResource(direction);
         DBG qDebug() << " .. FindInAllFiles GetNextContainingResource" << containing_resource;
-        // --------------------------------------------- ĞŞ¸Ä£ºÑ­»·²éÕÒBUG -----------------------------------------------------
+        // --------------------------------------------- ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUG -----------------------------------------------------
         /*
         if (containing_resource) {
             DBG qDebug() << " .. which is " << containing_resource->GetRelativePath();*/
 
-        // ¸Ä±ä GetNextContainingResource ¹¦ÄÜ£¬µ±É¸Ñ¡×ÊÔ´´æÔÚÄÜÆ¥Åäµ½µÄ×ÊÔ´£¬ÔòÑ­»··µ»ØÄÇĞ©×ÊÔ´£¬Æ¥ÅäÒ»ÖÜºó²»ÔÙ·µ»Ønullptr¡£
+        // æ”¹å˜ GetNextContainingResource å‡½æ•°ï¼šé¿å…ç­›é€‰èµ„æºæ—¶åŒ¹é…åˆ°å½“å‰èµ„æºå¹¶å¾ªç¯ï¼›å½“è¿™äº›èµ„æºéƒ½åŒ¹é…ä¸€è½®åå†è¿”å› nullptrã€‚
         if (containing_resource && current_resource != containing_resource) {
             DBG qDebug() << " .. which is " << containing_resource->GetRelativePath();
 
-            if (containing_resource == m_StartingResource) { // ËÑË÷µÖ´ïÆğÊ¼Ò³£¬µ± Wrap ¿ªÆôÊ±½øÈëÏÂ¸öÑ­»·£¬·ñÔò½áÊøËÑË÷¡£
+            if (containing_resource == m_StartingResource) { // å‘ç°èµ·å§‹é¡µé¢æ—¶ï¼ŒWrap æŸ¥æ‰¾è¿›å…¥ä¸‹ä¸€è½®å¾ªç¯ã€‚
                 if (m_OptionWrap) { m_InRemainder = false; }
                 else { return false; }
             }
@@ -1248,7 +1261,7 @@ bool FindReplace::FindInAllFiles(Searchable::Direction direction)
                 found = searchable->FindNext(GetSearchRegex(), direction, m_SpellCheck, true, false);
             }
         }
-        // ---------------------------ĞŞ¸Ä£ºÑ­»·²éÕÒBUG£º¶àÎÄ¼şËÑË÷Ê±µÄÑ­»·Æ¥Åä----------------------------
+        // ---------------------------ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUGï¼Œè·¨æ–‡ä»¶æŸ¥æ‰¾æ—¶å¾ªç¯åŒ¹é…----------------------------
         else if (m_OptionWrap && containing_resource == current_resource) {
             m_InRemainder = false;
             found = searchable->FindNext(GetSearchRegex(), direction, m_SpellCheck, true, false);
@@ -1301,7 +1314,7 @@ Resource *FindReplace::GetNextContainingResource(Searchable::Direction direction
     }
 
     Resource *next_resource = starting_resource;
-    //------------------------------------ ĞŞ¸Ä£ºÑ­»·²éÕÒBUG ----------------------------------------
+    //------------------------------------ ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUG ----------------------------------------
     /*
     if (need_to_check_assigned_starting_resource) {
         DBG qDebug() << "Trying newly assigned first eesource: " << next_resource->GetRelativePath();
@@ -1341,7 +1354,7 @@ Resource *FindReplace::GetNextContainingResource(Searchable::Direction direction
         passed_starting_resource = true;
     }
     //---------------------------------------------------------------------------------------------------
-    //-----------------------------------ĞŞ¸Ä£ºÑ­»·²éÕÒBUG----------------------------------------------
+    //-----------------------------------ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUG----------------------------------------------
     /*
     while (!passed_starting_resource || (next_resource != starting_resource)) {
         
@@ -1352,7 +1365,7 @@ Resource *FindReplace::GetNextContainingResource(Searchable::Direction direction
         }*/
     while (true) {
         next_resource = GetNextResource(next_resource, direction);
-        //ĞŞ¸Ä£º¸Ä±ä GetNextContainingResource ¹¦ÄÜ£¬¿É·µ»ØËÑË÷ÆğÊ¼Ò³Ãæ
+        // ä¿®æ”¹ï¼šè°ƒæ•´ GetNextContainingResource é€»è¾‘ï¼Œå…ˆå¤„ç†èµ·å§‹é¡µé¢
         if (next_resource == starting_resource) {
             if (!passed_starting_resource && ResourceContainsCurrentRegex(next_resource)) {
                 return next_resource;
@@ -1385,7 +1398,7 @@ Resource *FindReplace::GetNextContainingResource(Searchable::Direction direction
 Resource *FindReplace::GetNextResource(Resource *current_resource, Searchable::Direction direction)
 {
     //QList <Resource *> resources = GetFilesToSearch();
-    QList <Resource*> resources = GetFilesToSearch(true); // ĞŞ¸Ä£ºÑ­»·²éÕÒBUG£ºGetFilesToSearchÇ¿ÖÆ·µ»ØËùÓĞÉ¸Ñ¡µ½µÄ×ÊÔ´¡£
+    QList <Resource*> resources = GetFilesToSearch(true); // ä¿®æ”¹ï¼šå¾ªç¯æŸ¥æ‰¾ BUGï¼ŒGetFilesToSearch å¼ºåˆ¶è¿”å›ç»è¿‡ç­›é€‰çš„æœç´¢èµ„æº
     int max_reading_order       = resources.count() - 1;
     int current_reading_order   = 0;
     int next_reading_order      = 0;
@@ -1978,20 +1991,93 @@ void FindReplace::ReplaceAllSearch()
 
     SetKeyModifiers();
     m_IsSearchGroupRunning = true;
-    int count = 0;
-    foreach(SearchEditorModel::searchEntry * search_entry, search_entries) {
-        LoadSearch(search_entry);
-        count += ReplaceAll();
-        m_MainWindow->SearchEditorRecordEntryAsCompleted(search_entry);
+
+    // Build rules from search entries
+    QList<SearchBatch::Rule> rules;
+    QHash<QString, TextResource*> resourceMap;
+
+    for (int i = 0; i < search_entries.count(); ++i) {
+        SearchEditorModel::searchEntry* entry = search_entries[i];
+
+        // Temporarily load search to set up state for GetSearchRegex
+        UpdateSearchControls(entry->controls);
+        ui.cbFind->lineEdit()->setText(entry->find);
+        ui.cbReplace->lineEdit()->setText(entry->replace);
+
+        SearchBatch::Rule rule;
+        rule.id = QString::number(i);
+        rule.name = entry->name.isEmpty() ? tr("Unnamed search %1").arg(i + 1) : entry->name;
+        rule.searchRegex = GetSearchRegex();
+        rule.replacement = GetReplace();
+
+        // Get target files
+        QList<Resource*> targetResources = GetFilesToSearch(true);
+        for (Resource* res : targetResources) {
+            TextResource* textRes = qobject_cast<TextResource*>(res);
+            if (textRes) {
+                QString path = textRes->GetRelativePath();
+                rule.resourcePaths.append(path);
+                if (!resourceMap.contains(path)) {
+                    resourceMap.insert(path, textRes);
+                }
+            }
+        }
+
+        rules.append(rule);
     }
+
+    // Define apply function
+    auto applyFn = [](const SearchBatch::Rule& rule, const QString& resourcePath, const QString& text) -> SearchBatch::ApplyResult {
+        SearchBatch::ApplyResult result;
+        SPCRE* spcre = PCRECache::instance()->getObject(rule.searchRegex);
+        QList<SPCRE::MatchInfo> match_info = spcre->getEveryMatchInfo(text);
+
+        QString new_text = text;
+        int count = 0;
+        for (int i = match_info.count() - 1; i >= 0; i--) {
+            QString match_segment = Utility::Substring(
+                match_info.at(i).offset.first,
+                match_info.at(i).offset.second,
+                new_text);
+            QString replacement_text;
+
+            if (spcre->replaceText(match_segment, match_info.at(i).capture_groups_offsets,
+                                   rule.replacement, replacement_text)) {
+                new_text.replace(match_info.at(i).offset.first,
+                                match_info.at(i).offset.second - match_info.at(i).offset.first,
+                                replacement_text);
+                count++;
+            }
+        }
+
+        result.text = new_text;
+        result.replacementCount = count;
+        return result;
+    };
+
+    // Run batch with coordinator
+    SearchBatch::Result batchResult = SearchBatchCoordinator::Run(
+        m_MainWindow, rules, resourceMap, applyFn);
+
     m_IsSearchGroupRunning = false;
 
-    if (count == 0) {
+    // Mark completed entries
+    if (batchResult.success) {
+        for (SearchEditorModel::searchEntry* entry : search_entries) {
+            m_MainWindow->SearchEditorRecordEntryAsCompleted(entry);
+        }
+    }
+
+    // Show result
+    if (!batchResult.success) {
+        ShowMessage(tr("Batch replace failed: %1").arg(batchResult.error));
+    } else if (batchResult.replacementCount == 0) {
         ShowMessage(tr("No replacements made"));
     } else {
-        QString message = tr("Replacements made: %n", "", count);
+        QString message = tr("Replacements made: %n", "", batchResult.replacementCount);
         ShowMessage(message);
     }
+
     ResetKeyModifiers();
 }
 

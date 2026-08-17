@@ -1371,6 +1371,61 @@ void CodeViewEditor::contextMenuEvent(QContextMenuEvent *event)
     // parent during qmenu exec.  See discussion at:
     // https://www.qtcentre.org/threads/65046-closing-parent-widget-during-QMenu-exec()
     QPointer<QMenu> menu = createStandardContextMenu();
+
+    // The standard text-control actions operate on this document directly.
+    // Replace only Undo/Redo so cross-file batch history uses MainWindow's
+    // same route as the menu and toolbar actions.
+    MainWindow *main_window = qobject_cast<MainWindow *>(window());
+    if (main_window && !menu.isNull()) {
+        QAction *undo_action = nullptr;
+        QAction *redo_action = nullptr;
+        for (QAction *action : menu->actions()) {
+            const QString key = (action->objectName() + action->text()).toLower();
+            if (!action->isSeparator() && undo_action == nullptr &&
+                (key.contains(QStringLiteral("undo")) || key.contains(QStringLiteral("撤销")))) {
+                undo_action = action;
+            } else if (!action->isSeparator() && redo_action == nullptr &&
+                       (key.contains(QStringLiteral("redo")) || key.contains(QStringLiteral("重做")))) {
+                redo_action = action;
+            }
+        }
+
+        // Qt's standard context menu has Undo and Redo as its first two
+        // non-separator actions even when their translated labels are opaque.
+        if (undo_action == nullptr || redo_action == nullptr) {
+            QList<QAction *> standard_actions;
+            for (QAction *action : menu->actions()) {
+                if (!action->isSeparator()) {
+                    standard_actions.append(action);
+                }
+            }
+            if (standard_actions.size() >= 2) {
+                undo_action = standard_actions.at(0);
+                redo_action = standard_actions.at(1);
+            }
+        }
+
+        if (undo_action) {
+            undo_action->setEnabled(undo_action->isEnabled() || main_window->HasManagedUndo());
+        }
+        if (redo_action) {
+            redo_action->setEnabled(redo_action->isEnabled() || main_window->HasManagedRedo());
+        }
+
+        const auto route_action = [main_window](QAction *action, const char *slot_name) {
+            if (action == nullptr) {
+                return;
+            }
+            action->disconnect();
+            QObject::connect(action, &QAction::triggered, action,
+                             [main_window, slot_name]() {
+                                 QMetaObject::invokeMethod(main_window, slot_name,
+                                                           Qt::DirectConnection);
+                             });
+        };
+        route_action(undo_action, "UndoAction");
+        route_action(redo_action, "RedoAction");
+    }
     
     if (m_reformatCSSEnabled) {
         AddReformatCSSContextMenu(menu);
@@ -3618,7 +3673,12 @@ void CodeViewEditor::ReformatHTML(bool all, bool to_valid)
     QString version = mainWindow->GetCurrentBook()->GetConstOPF()->GetEpubVersion();
 
     if (all) {
-        mainWindow->GetCurrentBook()->ReformatAllHTML(to_valid);
+        const QList<HTMLResource *> changed_resources = mainWindow->GetCurrentBook()->ReformatAllHTML(to_valid);
+        mainWindow->RegisterBatchUndoGroup(changed_resources);
+        ContentTab *tab = mainWindow->GetCurrentContentTab();
+        if (tab && changed_resources.contains(qobject_cast<HTMLResource *>(tab->GetLoadedResource()))) {
+            tab->ContentChangedExternally();
+        }
     } else {
         original_text = toPlainText();
 

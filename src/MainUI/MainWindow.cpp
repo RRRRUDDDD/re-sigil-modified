@@ -23,6 +23,7 @@
 **
 *************************************************************************/
 
+#include <QFile>
 #include <QFileInfo>
 #include <QThread>
 #include <QTimer>
@@ -60,6 +61,7 @@
 #include <QStyleFactory>
 #include <QStyle>
 #include <QDebug>
+#include <QWriteLocker>
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 #include <QDesktopWidget>
@@ -124,6 +126,7 @@
 #include "ResourceObjects/HTMLResource.h"
 #include "ResourceObjects/NCXResource.h"
 #include "ResourceObjects/OPFResource.h"
+#include "ResourceObjects/TextResource.h"
 #include "ResourceObjects/NavProcessor.h"
 #include "sigil_constants.h"
 #include "sigil_exception.h"
@@ -221,6 +224,8 @@ MainWindow::MainWindow(const QString &openfilepath,
     m_IsInitialLoad(true),
     m_CurrentFilePath(QString()),
     m_CurrentFileName(QString()),
+    m_CheckpointBookId(QString()),
+    m_PreserveCheckpointRepo(false),
     m_Book(new Book()),
     m_LastFolderOpen(QString()),
     m_SaveACopyFilename(QString()),
@@ -591,28 +596,33 @@ void MainWindow::loadPluginsMenu()
 
     // first set default icons for quick launch plugin buttons
     // Do we need this?  Aren't these set in Form_Files/main.ui
-    i = 1;
-    foreach(QAction* pa, m_qlactions) {
-        QString resource = ":/main/plugin_" + QString::number(i) + "pips.svg";
-        pa->setIcon(QIcon(resource));
-        i++;
+    //--------------------- modified: plugin slots 20 -----------------
+    // Only plugin_1pips.svg .. plugin_10pips.svg exist; slots 11-20 reuse
+    // them cyclically so no new icon resources are needed.
+    const int PIP_ICON_COUNT = 10;
+    for (int slot = 0; slot < m_qlactions.count(); ++slot) {
+        int icon_index = (slot % PIP_ICON_COUNT) + 1;  // 1-10 循环
+        QString resource = QString(":/main/plugin_%1pips.svg").arg(icon_index);
+        m_qlactions.at(slot)->setIcon(QIcon(resource));
     }
+    //-----------------------------------------------------------------
 
     // now set any custom icons
     SettingsStore ss;
     QStringList namemap = ss.pluginMap();
-    int pos = 0;
-    foreach (QString name, namemap) {
-        if (!name.isEmpty()) {
-            Plugin * p = plugins.value(name);
-            if (p != NULL) {
-                QString iconpath = p->get_iconpath();
-                if (!iconpath.isEmpty()) {
-                    m_qlactions.at(pos)->setIcon(QIcon(iconpath));
-                }
+    int max_slots = qMin(namemap.count(), m_qlactions.count());
+    for (int pos = 0; pos < max_slots; ++pos) {
+        const QString &name = namemap.at(pos);
+        if (name.isEmpty()) {
+            continue;
+        }
+        Plugin * p = plugins.value(name);
+        if (p != NULL) {
+            QString iconpath = p->get_iconpath();
+            if (!iconpath.isEmpty()) {
+                m_qlactions.at(pos)->setIcon(QIcon(iconpath));
             }
         }
-        pos++;
     }
 
     updateToolTipsOnPluginIcons();
@@ -902,7 +912,56 @@ void MainWindow::MoveContentFilesToStdFolders()
     }
 }
 
+// The checkpoint repository of the current book is keyed by an id that is
+// private to this session and is never stored inside the epub, so taking a
+// checkpoint can not add a dc:identifier UUID to the book's OPF.
+QString MainWindow::GetCheckpointBookId(bool create_if_missing)
+{
+    if (m_CheckpointBookId.isEmpty() && create_if_missing) {
+        m_CheckpointBookId = Utility::CreateUUID();
+    }
+    return m_CheckpointBookId;
+}
+
+// Checkpoints are meant to protect the current editing session only, so the
+// repository is destroyed as soon as the book is closed or replaced.
+void MainWindow::EraseSessionCheckpointRepo()
+{
+    if (m_CheckpointBookId.isEmpty()) return;
+
+    const QString bookid = m_CheckpointBookId;
+    m_CheckpointBookId.clear();
+
+    const QString localRepo = Utility::DefinePrefsDir() + "/repo";
+    const QString repopath = localRepo + "/epub_" + bookid;
+    if (!QDir(repopath).exists()) return;
+
+    PythonRoutines pr;
+    if (!pr.PerformRepoEraseInPython(localRepo, bookid)) {
+        // fall back to a plain recursive delete if python could not do it
+        if (!Utility::removeDir(repopath)) {
+            qWarning() << "Could not remove session checkpoint repo:" << repopath;
+            return;
+        }
+    }
+    DBG qDebug() << "Erased session checkpoint repo:" << repopath;
+}
+
+void MainWindow::CleanCheckpointCheckoutCache()
+{
+    QDir checkout_dir(Utility::DefinePrefsDir() + "/repo/checkouts");
+    if (checkout_dir.exists()) {
+        checkout_dir.removeRecursively();
+        DBG qDebug() << "Cleaned checkpoint cache:" << checkout_dir.path();
+    }
+}
+
 bool MainWindow::RepoCommit()
+{
+    return CreateRepoCheckpoint();
+}
+
+bool MainWindow::CreateRepoCheckpoint()
 {
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
@@ -913,33 +972,33 @@ bool MainWindow::RepoCommit()
         repoDir.mkpath(localRepo);
     }
 
-    // ensure epub opf has valid bookid and retrieve it
-    QString bookid = m_Book->GetOPF()->GetUUIDIdentifierValue();
+    // Never touch the book to create a checkpoint: the repository is keyed by a
+    // session private id instead of a dc:identifier UUID forced into the OPF.
+    QString bookid = GetCheckpointBookId(true);
+    if (bookid.isEmpty()) {
+        ShowMessageOnStatusBar(tr("Checkpoint generation failed."));
+        QApplication::restoreOverrideCursor();
+        return false;
+    }
 
     // collect additional book info (file name, title, datetime)
     QStringList bookinfo;
     bookinfo << QFileInfo(m_CurrentFileName).completeBaseName();
     bookinfo << m_Book->GetOPF()->GetPrimaryBookTitle();
 
-    // follow epub3 spec and update modification date/time for every save and commit
-    // manually set the book to be modified since modification date setting is normally
-    // only done upon save or save-as so no need to set the modified flag
-    bookinfo <<  m_Book->GetOPF()->AddModificationDateMeta();
+    // Follow the epub3 spec for user-requested checkpoints.
+    bookinfo << m_Book->GetOPF()->AddModificationDateMeta();
     m_Book->SetModified();
 
-    // finally force all changes to Disk
     SaveTabData();
+
+    // Preserve the existing user-requested checkpoint behaviour.
     m_Book->GetFolderKeeper()->SuspendWatchingResources();
     m_Book->SaveAllResourcesToDisk();
     m_Book->GetFolderKeeper()->ResumeWatchingResources();
+    const QString bookroot = m_Book->GetFolderKeeper()->GetFullPathToMainFolder();
 
-    // get epub root
-    QString bookroot = m_Book->GetFolderKeeper()->GetFullPathToMainFolder();
-
-    // get a full list of epub resource bookpaths
     QStringList bookfiles = m_Book->GetFolderKeeper()->GetAllBookPaths();
-
-    // add in the META-INF/container.xml file
     bookfiles << "META-INF/container.xml";
 
     // now perform the commit using python in a separate thread since this
@@ -972,7 +1031,7 @@ void MainWindow::RepoCheckout(QString bookid, QString destdir, QString filename,
     QString localRepo = Utility::DefinePrefsDir() + "/repo";
 
     if (destdir.isEmpty()) {
-        destdir = Utility::DefinePrefsDir() + "/checkouts";
+        destdir = Utility::DefinePrefsDir() + "/repo/checkouts";
     }
     QDir coDir(destdir);
     if (!coDir.exists()) {
@@ -980,8 +1039,12 @@ void MainWindow::RepoCheckout(QString bookid, QString destdir, QString filename,
     }
 
     if (bookid.isEmpty()) {
-        // use current epub's bookid and create one if needed
-        bookid = m_Book->GetOPF()->GetUUIDIdentifierValue();
+        // use the checkpoint repository created during this session
+        bookid = GetCheckpointBookId(false);
+        if (bookid.isEmpty()) {
+            ShowMessageOnStatusBar(tr("Checkout Failed. No checkpoints found"));
+            return;
+        }
     }
 
     if (filename.isEmpty()) {
@@ -1079,7 +1142,15 @@ void MainWindow::RepoCheckout(QString bookid, QString destdir, QString filename,
             proceed = true;
         }
         if (proceed) {
+            // reloading the same book from its own checkpoint must not throw
+            // away the checkpoint repository of the running session
+            const bool same_repo = (bookid == m_CheckpointBookId);
+            m_PreserveCheckpointRepo = same_repo;
             LoadFile(epub_result, true);
+            m_PreserveCheckpointRepo = false;
+            if (same_repo) {
+                m_CheckpointBookId = bookid;
+            }
             // restore what we can of the open tabs
             for(int i=0; i < open_tab_bookpaths.length(); i++) {
                 OpenFile(open_tab_bookpaths.at(i), -1, open_tab_positions.at(i));
@@ -1098,8 +1169,12 @@ void MainWindow::RepoDiff(QString bookid)
         return;
     }
     if (bookid.isEmpty()) {
-        // use current epub's bookid and create one if needed
-        bookid = m_Book->GetOPF()->GetUUIDIdentifierValue();
+        // use the checkpoint repository created during this session
+        bookid = GetCheckpointBookId(false);
+        if (bookid.isEmpty()) {
+            ShowMessageOnStatusBar(tr("Diff Failed. No checkpoints found"));
+            return;
+        }
     }
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
@@ -1206,7 +1281,11 @@ void MainWindow::RepoEditTagDescription()
         return;
     }
     QString bookid;
-    bookid = m_Book->GetOPF()->GetUUIDIdentifierValue();
+    bookid = GetCheckpointBookId(false);
+    if (bookid.isEmpty()) {
+        ShowMessageOnStatusBar(tr("Description Edit Failed. No checkpoints found"));
+        return;
+    }
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
     // Get tags using python in a separate thread since this
@@ -1288,7 +1367,11 @@ void MainWindow::RepoEditTagDescription()
 
 void MainWindow::RepoShowLog()
 {
-    QString bookid = m_Book->GetOPF()->GetUUIDIdentifierValue();
+    QString bookid = GetCheckpointBookId(false);
+    if (bookid.isEmpty()) {
+        ShowMessageOnStatusBar(tr("No checkpoints found"));
+        return;
+    }
     QString localRepo = Utility::DefinePrefsDir() + "/repo/";
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
@@ -1512,6 +1595,144 @@ QList <Resource *> MainWindow::GetNCXResource()
 QSharedPointer<Book> MainWindow::GetCurrentBook()
 {
     return m_Book;
+}
+
+void MainWindow::RegisterBatchUndoGroup(const QList<TextResource *> &changed_resources)
+{
+    QList<TextResource *> tracked_resources;
+    if (m_Book) {
+        const QList<Resource *> all_resources = m_Book->GetFolderKeeper()->GetResourceList();
+        for (Resource *resource : all_resources) {
+            TextResource *text_resource = qobject_cast<TextResource *>(resource);
+            if (text_resource) {
+                tracked_resources.append(text_resource);
+            }
+        }
+    }
+    m_BatchUndoManager.RegisterGroup(changed_resources, tracked_resources);
+}
+
+void MainWindow::RegisterBatchUndoGroup(const QList<HTMLResource *> &changed_resources)
+{
+    QList<TextResource *> text_resources;
+    for (HTMLResource *resource : changed_resources) {
+        if (resource) {
+            text_resources.append(resource);
+        }
+    }
+    RegisterBatchUndoGroup(text_resources);
+}
+
+bool MainWindow::HasManagedUndo() const
+{
+    return m_BatchUndoManager.CanUndoGroup() ||
+           m_BatchUndoManager.UndoResourceBeforeGroup() != nullptr;
+}
+
+bool MainWindow::HasManagedRedo() const
+{
+    return m_BatchUndoManager.CanRedoGroup() ||
+           m_BatchUndoManager.RedoResourceBeforeGroup() != nullptr;
+}
+
+void MainWindow::UndoAction()
+{
+    if (!m_BatchUndoManager.CanUndoGroup()) {
+        TextResource *blocking_resource = m_BatchUndoManager.UndoResourceBeforeGroup();
+        if (blocking_resource) {
+            bool undo_applied = false;
+            {
+                QWriteLocker locker(&blocking_resource->GetLock());
+                undo_applied = blocking_resource->UndoLastEdit();
+            }
+            if (undo_applied) {
+                if (m_Book) {
+                    m_Book->SetModified(true);
+                }
+                ContentTab *tab = GetCurrentContentTab();
+                Resource *current_resource = tab ? tab->GetLoadedResource() : nullptr;
+                if (tab && current_resource == blocking_resource) {
+                    tab->ContentChangedExternally();
+                }
+                return;
+            }
+        }
+        ContentTab *tab = GetCurrentContentTab();
+        if (tab) {
+            QMetaObject::invokeMethod(tab, "Undo", Qt::DirectConnection);
+        }
+        return;
+    }
+
+    const QList<TextResource *> changed_resources = m_BatchUndoManager.UndoGroup();
+    if (changed_resources.isEmpty()) {
+        ContentTab *tab = GetCurrentContentTab();
+        if (tab) {
+            QMetaObject::invokeMethod(tab, "Undo", Qt::DirectConnection);
+        }
+        return;
+    }
+
+    if (m_Book) {
+        m_Book->SetModified(true);
+    }
+    ContentTab *tab = GetCurrentContentTab();
+    Resource *current_resource = tab ? tab->GetLoadedResource() : nullptr;
+    TextResource *current_text_resource = qobject_cast<TextResource *>(current_resource);
+    if (tab && current_text_resource && changed_resources.contains(current_text_resource)) {
+        tab->ContentChangedExternally();
+    }
+    ShowMessageOnStatusBar(tr("Undid a batch edit across %n file(s)", "", changed_resources.count()));
+}
+
+void MainWindow::RedoAction()
+{
+    if (!m_BatchUndoManager.CanRedoGroup()) {
+        TextResource *blocking_resource = m_BatchUndoManager.RedoResourceBeforeGroup();
+        if (blocking_resource) {
+            bool redo_applied = false;
+            {
+                QWriteLocker locker(&blocking_resource->GetLock());
+                redo_applied = blocking_resource->RedoLastEdit();
+            }
+            if (redo_applied) {
+                if (m_Book) {
+                    m_Book->SetModified(true);
+                }
+                ContentTab *tab = GetCurrentContentTab();
+                Resource *current_resource = tab ? tab->GetLoadedResource() : nullptr;
+                if (tab && current_resource == blocking_resource) {
+                    tab->ContentChangedExternally();
+                }
+                return;
+            }
+        }
+        ContentTab *tab = GetCurrentContentTab();
+        if (tab) {
+            QMetaObject::invokeMethod(tab, "Redo", Qt::DirectConnection);
+        }
+        return;
+    }
+
+    const QList<TextResource *> changed_resources = m_BatchUndoManager.RedoGroup();
+    if (changed_resources.isEmpty()) {
+        ContentTab *tab = GetCurrentContentTab();
+        if (tab) {
+            QMetaObject::invokeMethod(tab, "Redo", Qt::DirectConnection);
+        }
+        return;
+    }
+
+    if (m_Book) {
+        m_Book->SetModified(true);
+    }
+    ContentTab *tab = GetCurrentContentTab();
+    Resource *current_resource = tab ? tab->GetLoadedResource() : nullptr;
+    TextResource *current_text_resource = qobject_cast<TextResource *>(current_resource);
+    if (tab && current_text_resource && changed_resources.contains(current_text_resource)) {
+        tab->ContentChangedExternally();
+    }
+    ShowMessageOnStatusBar(tr("Redid a batch edit across %n file(s)", "", changed_resources.count()));
 }
 
 
@@ -1872,6 +2093,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
             DBG qDebug() << "in close event hiding Preview Window";
             m_PreviewWindow->hide();
         }
+
+        // Checkpoints only protect the running session: drop this book's
+        // repository and the temporary epubs generated from it
+        EraseSessionCheckpointRepo();
+        CleanCheckpointCheckoutCache();
 
 #ifdef Q_OS_MAC
         // Qt BUG:  macOS can not be left in fullscreen or maximized mode upon exit
@@ -3388,19 +3614,27 @@ void MainWindow::ApplicationFocusChanged(QWidget *old, QWidget *now)
 
 void MainWindow::QuickLaunchPlugin(int i)
 {
+    if (i < 0 || i >= m_qlactions.count()) {
+        qWarning() << "QuickLaunchPlugin: invalid slot index" << i;
+        return;
+    }
+
     SettingsStore ss;
     QStringList namemap = ss.pluginMap();
-    if ((i >= 0) && (namemap.count() > i)) {
-        QString pname = namemap.at(i);
-        if (m_pluginList.contains(pname)) {
-            // QApplication keeps a single modalWindowList across multiple main
-            // windows and this list is not updated until modal dialog is deleted
-            { 
-                PluginRunner prunner(m_TabManager, this);
-                prunner.exec(pname);
-            }
-            qApp->processEvents();
+    if (i >= namemap.count()) {
+        qWarning() << "QuickLaunchPlugin: no plugin mapped to slot" << i;
+        return;
+    }
+
+    QString pname = namemap.at(i);
+    if (m_pluginList.contains(pname)) {
+        // QApplication keeps a single modalWindowList across multiple main
+        // windows and this list is not updated until modal dialog is deleted
+        {
+            PluginRunner prunner(m_TabManager, this);
+            prunner.exec(pname);
         }
+        qApp->processEvents();
     }
 }
 
@@ -4311,12 +4545,19 @@ void MainWindow::updateToolTipsOnPluginIcons()
 {
     SettingsStore ss;
     QStringList namemap = ss.pluginMap();
-    int i=0;
-    foreach(QAction* pa, m_qlactions) {
-        QString pname = tr("RunPlugin") + QString::number(i+1);
-        if (namemap.count() > i) pname = namemap.at(i);
-        pa->setToolTip(pname);
-        i++;
+    int max_slots = qMin(namemap.count(), m_qlactions.count());
+
+    for (int i = 0; i < m_qlactions.count(); ++i) {
+        QString pname;
+        if (i < max_slots) {
+            pname = namemap.at(i);
+            if (pname.isEmpty()) {
+                pname = tr("RunPlugin") + QString::number(i + 1);
+            }
+        } else {
+            pname = tr("RunPlugin") + QString::number(i + 1);
+        }
+        m_qlactions.at(i)->setToolTip(pname);
     }
 }
 
@@ -4906,13 +5147,23 @@ void MainWindow::SetAutoSpellCheck(bool new_state)
 
 bool MainWindow::MendPrettifyHTML()
 {
-    m_Book->ReformatAllHTML(false);
+    const QList<HTMLResource *> changed_resources = m_Book->ReformatAllHTML(false);
+    RegisterBatchUndoGroup(changed_resources);
+    ContentTab *tab = GetCurrentContentTab();
+    if (tab && changed_resources.contains(qobject_cast<HTMLResource *>(tab->GetLoadedResource()))) {
+        tab->ContentChangedExternally();
+    }
     return true;
 }
 
 bool MainWindow::MendHTML()
 {
-    m_Book->ReformatAllHTML(true);
+    const QList<HTMLResource *> changed_resources = m_Book->ReformatAllHTML(true);
+    RegisterBatchUndoGroup(changed_resources);
+    ContentTab *tab = GetCurrentContentTab();
+    if (tab && changed_resources.contains(qobject_cast<HTMLResource *>(tab->GetLoadedResource()))) {
+        tab->ContentChangedExternally();
+    }
     return true;
 }
 
@@ -5297,17 +5548,19 @@ bool MainWindow::MaybeSaveDialogSaysProceed()
     qApp->processEvents();
 
     if (isWindowModified()) {
-        QMessageBox::StandardButton button_pressed;
-        button_pressed = QMessageBox::warning(this,
-                                              tr("Sigil"),
-                                              tr("The document has been modified.\n"
-                                                      "Do you want to save your changes?"),
-                                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel
-                                             );
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle(tr("Sigil"));
+        msgBox.setText(tr("The document has been modified.\n"
+                         "Do you want to save your changes?"));
+        msgBox.setIcon(QMessageBox::Warning);
+        msgBox.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        msgBox.setDefaultButton(QMessageBox::Save);
 
-        if (button_pressed == QMessageBox::Save) {
+        int ret = msgBox.exec();
+
+        if (ret == QMessageBox::Save) {
             return Save();
-        } else if (button_pressed == QMessageBox::Cancel) {
+        } else if (ret == QMessageBox::Cancel) {
             return false;
         }
     }
@@ -5329,8 +5582,17 @@ bool MainWindow::ProceedToOverwrite(const QString& msg, const QString &filename)
 
 void MainWindow::SetNewBook(QSharedPointer<Book> new_book)
 {
+    m_BatchUndoManager.Clear();
     m_TabManager->CloseOtherTabs();
     m_TabManager->CloseAllTabs(true);
+
+    // Checkpoints belong to the book being replaced, so drop them unless we are
+    // reloading the very same book from one of its own checkpoints
+    if (!m_PreserveCheckpointRepo) {
+        EraseSessionCheckpointRepo();
+    }
+    CleanCheckpointCheckoutCache();
+
     m_Book = new_book;
     m_BookBrowser->SetBook(m_Book);
     m_TableOfContents->SetBook(m_Book);
@@ -6026,6 +6288,18 @@ void MainWindow::ExtendUI()
     m_qlactions.append(ui.actionPlugin8);
     m_qlactions.append(ui.actionPlugin9);
     m_qlactions.append(ui.actionPlugin10);
+    //--------------------- modified: plugin slots 20 -----------------
+    m_qlactions.append(ui.actionPlugin11);
+    m_qlactions.append(ui.actionPlugin12);
+    m_qlactions.append(ui.actionPlugin13);
+    m_qlactions.append(ui.actionPlugin14);
+    m_qlactions.append(ui.actionPlugin15);
+    m_qlactions.append(ui.actionPlugin16);
+    m_qlactions.append(ui.actionPlugin17);
+    m_qlactions.append(ui.actionPlugin18);
+    m_qlactions.append(ui.actionPlugin19);
+    m_qlactions.append(ui.actionPlugin20);
+    //-----------------------------------------------------------------
 
     // initialize the first set of clip actions
     foreach(QAction * clipaction, ui.toolBarClips->actions()) {
@@ -6130,6 +6404,10 @@ void MainWindow::ExtendUI()
     ui.menuToolbars->addAction(ui.toolBarTools->toggleViewAction());
     ui.menuToolbars->addAction(ui.toolBarPlugins->toggleViewAction());
     ui.menuToolbars->addAction(ui.toolBarPlugins2->toggleViewAction());
+    //--------------------- modified: plugin slots 20 -----------------
+    ui.menuToolbars->addAction(ui.toolBarPlugins3->toggleViewAction());
+    ui.menuToolbars->addAction(ui.toolBarPlugins4->toggleViewAction());
+    //-----------------------------------------------------------------
     ui.menuToolbars->addAction(ui.toolBarHeadings->toggleViewAction());
     ui.menuToolbars->addAction(ui.toolBarTextFormats->toggleViewAction());
     ui.menuToolbars->addAction(ui.toolBarTextAlign->toggleViewAction());
@@ -6359,6 +6637,18 @@ void MainWindow::ExtendUI()
     sm->registerAction(this, ui.actionPlugin8,  "MainWindow.Plugins.RunPlugin8");
     sm->registerAction(this, ui.actionPlugin9,  "MainWindow.Plugins.RunPlugin9");
     sm->registerAction(this, ui.actionPlugin10, "MainWindow.Plugins.RunPlugin10");
+    //--------------------- modified: plugin slots 20 -----------------
+    sm->registerAction(this, ui.actionPlugin11, "MainWindow.Plugins.RunPlugin11");
+    sm->registerAction(this, ui.actionPlugin12, "MainWindow.Plugins.RunPlugin12");
+    sm->registerAction(this, ui.actionPlugin13, "MainWindow.Plugins.RunPlugin13");
+    sm->registerAction(this, ui.actionPlugin14, "MainWindow.Plugins.RunPlugin14");
+    sm->registerAction(this, ui.actionPlugin15, "MainWindow.Plugins.RunPlugin15");
+    sm->registerAction(this, ui.actionPlugin16, "MainWindow.Plugins.RunPlugin16");
+    sm->registerAction(this, ui.actionPlugin17, "MainWindow.Plugins.RunPlugin17");
+    sm->registerAction(this, ui.actionPlugin18, "MainWindow.Plugins.RunPlugin18");
+    sm->registerAction(this, ui.actionPlugin19, "MainWindow.Plugins.RunPlugin19");
+    sm->registerAction(this, ui.actionPlugin20, "MainWindow.Plugins.RunPlugin20");
+    //-----------------------------------------------------------------
 
     // Headings QToolButton
     ui.tbHeadings->setPopupMode(QToolButton::InstantPopup);
@@ -6790,8 +7080,8 @@ void MainWindow::MakeTabConnections(ContentTab *tab)
         rType != Resource::AudioResourceType && 
         rType != Resource::VideoResourceType && 
         rType != Resource::FontResourceType) {
-        connect(ui.actionUndo,                     SIGNAL(triggered()),  tab,   SLOT(Undo()));
-        connect(ui.actionRedo,                     SIGNAL(triggered()),  tab,   SLOT(Redo()));
+        connect(ui.actionUndo,                     SIGNAL(triggered()),  this,  SLOT(UndoAction()), Qt::UniqueConnection);
+        connect(ui.actionRedo,                     SIGNAL(triggered()),  this,  SLOT(RedoAction()), Qt::UniqueConnection);
         connect(ui.actionCut,                      SIGNAL(triggered()),  tab,   SLOT(Cut()));
         connect(ui.actionCopy,                     SIGNAL(triggered()),  tab,   SLOT(Copy()));
         connect(ui.actionPaste,                    SIGNAL(triggered()),  tab,   SLOT(Paste()));
@@ -6903,6 +7193,8 @@ void MainWindow::BreakTabConnections(ContentTab *tab)
     if (tab) disconnect(tab, 0, m_ClipboardHistorySelector, 0);
 
     // next disconnect it from ui.actions
+    disconnect(ui.actionUndo,                      SIGNAL(triggered()), this, SLOT(UndoAction()));
+    disconnect(ui.actionRedo,                      SIGNAL(triggered()), this, SLOT(RedoAction()));
     disconnect(ui.actionUndo,                      0, tab, 0);
     disconnect(ui.actionRedo,                      0, tab, 0);
     disconnect(ui.actionCut,                       0, tab, 0);

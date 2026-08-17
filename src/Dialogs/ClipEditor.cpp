@@ -767,19 +767,24 @@ void ClipEditor::ForceClose()
 bool ClipEditor::MaybeSaveDialogSaysProceed(bool is_forced)
 {
     if (m_ClipEditorModel->IsDataModified()) {
-        QMessageBox::StandardButton button_pressed;
-        QMessageBox::StandardButtons buttons = is_forced ? QMessageBox::Save | QMessageBox::Discard
-                                               : QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel;
-        button_pressed = QMessageBox::warning(this,
-                                              tr("Sigil: Clip Editor"),
-                                              tr("The Clip entries may have been modified.\n"
-                                                      "Do you want to save your changes?"),
-                                              buttons
-                                             );
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle(tr("Sigil: Clip Editor"));
+        msgBox.setText(tr("The Clip entries may have been modified.\n"
+                         "Do you want to save your changes?"));
+        msgBox.setIcon(QMessageBox::Warning);
 
-        if (button_pressed == QMessageBox::Save) {
+        if (is_forced) {
+            msgBox.setStandardButtons(QMessageBox::Save | QMessageBox::Discard);
+        } else {
+            msgBox.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        }
+        msgBox.setDefaultButton(QMessageBox::Save);
+
+        int ret = msgBox.exec();
+
+        if (ret == QMessageBox::Save) {
             return Save();
-        } else if (button_pressed == QMessageBox::Cancel) {
+        } else if (ret == QMessageBox::Cancel) {
             return false;
         } else {
             m_ClipEditorModel->LoadInitialData();

@@ -44,7 +44,7 @@ class QMenu;
 class QModelIndex;
 class QPoint;
 class QToolButton;
-class QTreeView;
+class BookBrowserTreeView;
 class QVBoxLayout;
 class QUrl;
 
@@ -491,7 +491,7 @@ private:
     /**
      * The tree view used to represent the book's files.
      */
-    QTreeView *m_TreeView;
+    BookBrowserTreeView *m_TreeView;
 
     /**
      * The data model used to feed the tree view.

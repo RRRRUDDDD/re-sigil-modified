@@ -337,9 +337,11 @@ QString OPFResource::GetPackageVersion() const
 }
 
 
-QString OPFResource::GetUUIDIdentifierValue()
+QString OPFResource::GetUUIDIdentifierValue(bool ensure_present)
 {
-    EnsureUUIDIdentifierPresent();
+    if (ensure_present) {
+        EnsureUUIDIdentifierPresent();
+    }
     QReadLocker locker(&GetLock());
     QString source = CleanSource::ProcessXML(GetText(),"application/oebps-package+xml");
     OPFParser p;
@@ -353,9 +355,8 @@ QString OPFResource::GetUUIDIdentifierValue()
             }
         }
     }
-    // EnsureUUIDIdentifierPresent should ensure we
-    // never reach here.
-    Q_ASSERT(false);
+    // EnsureUUIDIdentifierPresent should ensure the default path never reaches here.
+    Q_ASSERT(!ensure_present);
     return QString();
 }
 
@@ -366,6 +367,7 @@ void OPFResource::EnsureUUIDIdentifierPresent()
     QString source = CleanSource::ProcessXML(GetText(),"application/oebps-package+xml");
     OPFParser p;
     p.parse(source);
+    // Check if any valid UUID identifier already exists
     for (int i=0; i < p.m_metadata.count(); ++i) {
         MetaEntry me = p.m_metadata.at(i);
         if(me.m_name.startsWith("dc:identifier")) {
@@ -375,6 +377,7 @@ void OPFResource::EnsureUUIDIdentifierPresent()
             }
         }
     }
+    // Only create UUID if none exists - this prevents creating new UUIDs in OPF on every checkpoint
     QString uuid = Utility::CreateUUID();
     // add in the proper identifier type prefix
     if (!uuid.startsWith("urn:uuid:")) {
@@ -1415,6 +1418,19 @@ void OPFResource::WriteSimpleMetadata(const QString &metaname, const QString &me
 
 void OPFResource::WriteIdentifier(const QString &metaname, const QString &metavalue, OPFParser& p)
 {
+    // First check if this exact identifier already exists (prevent duplicates)
+    for (int i = 0; i < p.m_metadata.count(); ++i) {
+        MetaEntry me = p.m_metadata.at(i);
+        if (me.m_name.startsWith("dc:identifier")) {
+            QString scheme = me.m_atts.value(QString("scheme"), QString(""));
+            // epub3 no longer uses the scheme attribute
+            if (scheme.isEmpty() && me.m_content.startsWith("urn:uuid:")) scheme = "UUID";
+            if ((metavalue == me.m_content) && (metaname == scheme)) {
+                return;  // Identifier already exists, don't add duplicate
+            }
+        }
+    }
+
     int pos = GetMainIdentifier(p);
     if (pos > -1) {
         MetaEntry me = p.m_metadata.at(pos);

@@ -58,9 +58,12 @@ int SearchOperations::CountInFiles(const QString &search_regex,
 
 int SearchOperations::ReplaceInAllFIles(const QString &search_regex,
                                         const QString &replacement,
-                                        QList<Resource *> resources)
+                                        QList<Resource *> resources,
+                                        QList<TextResource *> *changed_resources)
 {
     QProgressDialog progress(QObject::tr("Replacing search term..."), 0, 0, resources.count(), Utility::GetMainWindow());
+    // Keep undo-stack positions stable until the completed group is registered.
+    progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(PROGRESS_BAR_MINIMUM_DURATION);
     int progress_value = 0;
     progress.setValue(progress_value);
@@ -68,8 +71,14 @@ int SearchOperations::ReplaceInAllFIles(const QString &search_regex,
     int count = 0;
     foreach(Resource * resource, resources) {
         progress.setValue(progress_value++);
-        qApp->processEvents();
-        count += ReplaceInFile(search_regex, replacement, resource);
+        // Repaint the progress dialog without dispatching edits or Undo/Redo
+        // before the completed batch has been registered.
+        qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+        TextResource *changed_resource = nullptr;
+        count += ReplaceInFile(search_regex, replacement, resource, &changed_resource);
+        if (changed_resources && changed_resource) {
+            changed_resources->append(changed_resource);
+        }
     }
     return count;
 }
@@ -125,19 +134,20 @@ int SearchOperations::CountInTextFile(const QString &search_regex, TextResource 
 
 int SearchOperations::ReplaceInFile(const QString &search_regex,
                                     const QString &replacement,
-                                    Resource *resource)
+                                    Resource *resource,
+                                    TextResource **changed_resource)
 {
     // QWriteLocker locker(&resource->GetLock());
     HTMLResource *html_resource = qobject_cast<HTMLResource *>(resource);
 
     if (html_resource) {
-        return ReplaceHTMLInFile(search_regex, replacement, html_resource);
+        return ReplaceHTMLInFile(search_regex, replacement, html_resource, changed_resource);
     }
 
     TextResource *text_resource = qobject_cast<TextResource *>(resource);
 
     if (text_resource) {
-        return ReplaceTextInFile(search_regex, replacement, text_resource);
+        return ReplaceTextInFile(search_regex, replacement, text_resource, changed_resource);
     }
 
     // We should never get here.
@@ -147,30 +157,32 @@ int SearchOperations::ReplaceInFile(const QString &search_regex,
 
 int SearchOperations::ReplaceHTMLInFile(const QString &search_regex,
                                         const QString &replacement,
-                                        HTMLResource *html_resource)
+                                        HTMLResource *html_resource,
+                                        TextResource **changed_resource)
 {
     // SettingsStore ss;
     QWriteLocker locker(&html_resource->GetLock());
-    int count;
-    QString new_text;
     QString text = html_resource->GetText();
-    std::tie(new_text, count) = PerformGlobalReplace(text, search_regex, replacement);
-    html_resource->SetText(new_text);
-    return count;
+    std::tuple<QString, int> result = PerformGlobalReplace(text, search_regex, replacement);
+    if (html_resource->SetTextAsUndoableEdit(std::get<0>(result)) && changed_resource) {
+        *changed_resource = html_resource;
+    }
+    return std::get<1>(result);
  }
 
 
 int SearchOperations::ReplaceTextInFile(const QString &search_regex,
                                         const QString &replacement,
-                                        TextResource *text_resource)
+                                        TextResource *text_resource,
+                                        TextResource **changed_resource)
 {
     QWriteLocker locker(&text_resource->GetLock());
-    int count;
-    QString new_text;
     QString text = text_resource->GetText();
-    std::tie(new_text, count) = PerformGlobalReplace(text, search_regex, replacement);
-    text_resource->SetText(new_text);
-    return count;
+    std::tuple<QString, int> result = PerformGlobalReplace(text, search_regex, replacement);
+    if (text_resource->SetTextAsUndoableEdit(std::get<0>(result)) && changed_resource) {
+        *changed_resource = text_resource;
+    }
+    return std::get<1>(result);
 }
 
 

@@ -21,6 +21,7 @@
 *************************************************************************/
 
 #include <QtCore/QFile>
+#include <QtCore/QAtomicInteger>
 #include <QtCore/QString>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
@@ -31,14 +32,21 @@
 #include "ResourceObjects/TextResource.h"
 #include "sigil_exception.h"
 
+static QAtomicInteger<quint64> s_GlobalEditRevision(0);
+
 TextResource::TextResource(const QString &mainfolder, const QString &fullfilepath, QObject *parent)
     :
     Resource(mainfolder, fullfilepath, parent),
     m_CacheInUse(false),
     m_TextDocument(new TextDocument(this)),
-    m_IsLoaded(false)
+    m_IsLoaded(false),
+    m_UndoResetGeneration(0),
+    m_EditRevision(0)
 {
     m_TextDocument->setDocumentLayout(new QPlainTextDocumentLayout(m_TextDocument));
+    connect(m_TextDocument, &QTextDocument::contentsChanged, this, [this]() {
+        m_EditRevision = s_GlobalEditRevision.fetchAndAddRelaxed(1) + 1;
+    });
     connect(m_TextDocument, SIGNAL(contentsChanged()), this, SIGNAL(Modified()));
 }
 
@@ -79,6 +87,64 @@ void TextResource::SetText(const QString &text)
             QTimer::singleShot(0, this, SLOT(DelayedUpdateToTextDocument()));
         }
     }
+}
+
+
+bool TextResource::SetTextAsUndoableEdit(const QString &text)
+{
+    Q_ASSERT(QThread::currentThread() == QApplication::instance()->thread());
+    Q_ASSERT(m_TextDocument);
+
+    const int undoStepsBefore = m_TextDocument->availableUndoSteps();
+    m_TextDocument->replaceTextAsSingleUndoStep(text);
+    const int undoStepsAfter = m_TextDocument->availableUndoSteps();
+
+    m_IsLoaded = true;
+    m_CacheInUse = false;
+
+    return undoStepsAfter > undoStepsBefore;
+}
+
+
+bool TextResource::UndoLastEdit()
+{
+    Q_ASSERT(QThread::currentThread() == QApplication::instance()->thread());
+    Q_ASSERT(m_TextDocument);
+
+    if (!m_TextDocument->isUndoAvailable()) {
+        return false;
+    }
+
+    const int undoStepsBefore = m_TextDocument->availableUndoSteps();
+    m_TextDocument->undo();
+    const bool undoApplied = m_TextDocument->availableUndoSteps() < undoStepsBefore;
+    if (undoApplied) {
+        m_IsLoaded = true;
+        m_CacheInUse = false;
+    }
+
+    return undoApplied;
+}
+
+
+bool TextResource::RedoLastEdit()
+{
+    Q_ASSERT(QThread::currentThread() == QApplication::instance()->thread());
+    Q_ASSERT(m_TextDocument);
+
+    if (!m_TextDocument->isRedoAvailable()) {
+        return false;
+    }
+
+    const int redoStepsBefore = m_TextDocument->availableRedoSteps();
+    m_TextDocument->redo();
+    const bool redoApplied = m_TextDocument->availableRedoSteps() < redoStepsBefore;
+    if (redoApplied) {
+        m_IsLoaded = true;
+        m_CacheInUse = false;
+    }
+
+    return redoApplied;
 }
 
 
@@ -193,8 +259,12 @@ void TextResource::DelayedUpdateToTextDocument()
 
 void TextResource::SetTextInternal(const QString &text)
 {
+    const bool was_loaded = m_IsLoaded;
     m_TextDocument->setPlainText(text);
     m_TextDocument->setModified(false);
+    if (was_loaded) {
+        ++m_UndoResetGeneration;
+    }
     // Our resource has now been loaded with some text
     m_IsLoaded = true;
     m_CacheInUse = false;
@@ -205,4 +275,14 @@ void TextResource::SetTextInternal(const QString &text)
 bool TextResource::IsLoaded()
 {
     return m_IsLoaded;
+}
+
+quint64 TextResource::GetUndoResetGeneration() const
+{
+    return m_UndoResetGeneration;
+}
+
+quint64 TextResource::GetEditRevision() const
+{
+    return m_EditRevision;
 }

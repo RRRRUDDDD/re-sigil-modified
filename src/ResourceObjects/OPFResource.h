@@ -84,7 +84,7 @@ public:
     QString GetPackageVersion() const;
 
     // Also creates such an ident if none was found
-    QString GetUUIDIdentifierValue();
+    QString GetUUIDIdentifierValue(bool ensure_present = true);
 
     void EnsureUUIDIdentifierPresent();
 
@@ -169,7 +169,7 @@ public slots:
     void UpdateSpineOrder(const QList<HTMLResource *> html_files);
 
     void ResourceRenamed(const Resource *resource, QString old_full_path);
-    void BulkResourceRenamed(const QList<Resource*>resources, const QList<QString>old_full_paths); //修改：批量重命名
+    void BulkResourceRenamed(const QList<Resource*>resources, const QList<QString>old_full_paths); //淇敼锛氭壒閲忛噸鍛藉悕
 
     void ResourceMoved(const Resource *resource, QString old_full_path);
 

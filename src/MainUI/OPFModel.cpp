@@ -345,7 +345,7 @@ bool OPFModel:: RenameResourceList(const QList<Resource *> &resources, const QSt
     QStringList not_renamed;
     QHash<QString, QString> update;
     SettingsStore ss;
-    //--------- ĞŞ¸Ä£ºÅúÁ¿ÖØÃüÃû ----------
+    //--------- ä¿®æ”¹ï¼šæ‰¹é‡é‡å‘½å ----------
     QList<QString> old_full_paths;
     QList<Resource*> valid_resources;
     //-------------------------------------
@@ -380,9 +380,9 @@ bool OPFModel:: RenameResourceList(const QList<Resource *> &resources, const QSt
         }
 
         bool rename_success = false;
-        //------------------------------------ ĞŞ¸Ä£ºÅúÁ¿ÖØÃüÃû ---------------------------------
-        disconnect(resource, SIGNAL(Renamed(const Resource*, QString)), m_Book->GetFolderKeeper(), SLOT(ResourceRenamed(const Resource*, QString))); // È¡Ïû×ÊÔ´ÎÄ¼ş¶ÔFolderKeeper·¢ËÍRenamedĞÅºÅ
-        QString old_full_path = resource->GetFullPath();  // ÌáÇ°Í¨¹ıGetFullPath()±£´æ¾ÉÂ·¾¶¡£ÔÚRenameTo()Ö®ºó£¬GetFullPath()µÄÖµ»á¸ü¸ÄÎªĞÂÖµ£¬±ØĞëÌáÇ°±£´æ¾ÉÖµ¡£
+        //------------------------------------ ä¿®æ”¹ï¼šæ‰¹é‡é‡å‘½å ---------------------------------
+        disconnect(resource, SIGNAL(Renamed(const Resource*, QString)), m_Book->GetFolderKeeper(), SLOT(ResourceRenamed(const Resource*, QString))); // å–æ¶ˆèµ„æºæ–‡ä»¶å¯¹FolderKeeperå‘é€Renamedä¿¡å·
+        QString old_full_path = resource->GetFullPath();  // æå‰é€šè¿‡GetFullPath()ä¿å­˜æ—§è·¯å¾„ã€‚åœ¨RenameTo()ä¹‹åï¼ŒGetFullPath()çš„å€¼ä¼šæ›´æ”¹ä¸ºæ–°å€¼ï¼Œå¿…é¡»æå‰ä¿å­˜æ—§å€¼ã€‚
         //---------------------------------------------------------------------------------------
         // special case the OPFResource and the NCXResource
         if (resource->Type() == Resource::OPFResourceType) {
@@ -406,18 +406,18 @@ bool OPFModel:: RenameResourceList(const QList<Resource *> &resources, const QSt
             }
             continue;
         }
-        // -------- ĞŞ¸Ä£ºÅúÁ¿ÖØÃüÃû ---------
+        // -------- ä¿®æ”¹ï¼šæ‰¹é‡é‡å‘½å ---------
         valid_resources << resource;
         old_full_paths << old_full_path; 
-        connect(resource, SIGNAL(Renamed(const Resource*, QString)), m_Book->GetFolderKeeper(), SLOT(ResourceRenamed(const Resource*, QString))); //»Ö¸´RenamedĞÅºÅ£¬±£Ö¤ ResourceRenamed µ÷ÓÃÕı³£¡£
+        connect(resource, SIGNAL(Renamed(const Resource*, QString)), m_Book->GetFolderKeeper(), SLOT(ResourceRenamed(const Resource*, QString))); //æ¢å¤Renamedä¿¡å·ï¼Œä¿è¯ ResourceRenamed è°ƒç”¨æ­£å¸¸ã€‚
         // -----------------------------------
         update[ old_bookpath ] = resource->GetRelativePath();
     }
 
-    m_Book->GetFolderKeeper()->BulkResourceRenamed(valid_resources, old_full_paths); //ĞŞ¸Ä£ºÅúÁ¿ÖØÃüÃû
+    m_Book->GetFolderKeeper()->BulkResourceRenamed(valid_resources, old_full_paths); //ä¿®æ”¹ï¼šæ‰¹é‡é‡å‘½å
 
     if (update.count() > 0) {
-        //UniversalUpdates::PerformUniversalUpdates ¸üĞÂÎÄ¼şÖĞ¹ØÁªµÄÁ´½Ó¡£
+        //UniversalUpdates::PerformUniversalUpdates æ›´æ–°æ–‡ä»¶ä¸­å…³è”çš„é“¾æ¥ã€‚
         UniversalUpdates::PerformUniversalUpdates(true, m_Book->GetFolderKeeper()->GetResourceList(), update);
         emit BookContentModified();
     }

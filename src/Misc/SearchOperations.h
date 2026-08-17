@@ -46,7 +46,8 @@ public:
 
     static int ReplaceInAllFIles(const QString &search_regex,
                                  const QString &replacement,
-                                 QList<Resource *> resources);
+                                 QList<Resource *> resources,
+                                 QList<TextResource *> *changed_resources = nullptr);
 
 private:
 
@@ -65,15 +66,18 @@ private:
 
     static int ReplaceInFile(const QString &search_regex,
                              const QString &replacement,
-                             Resource *resource);
+                             Resource *resource,
+                             TextResource **changed_resource);
 
     static int ReplaceHTMLInFile(const QString &search_regex,
                                  const QString &replacement,
-                                 HTMLResource *html_resource);
+                                 HTMLResource *html_resource,
+                                 TextResource **changed_resource);
 
     static int ReplaceTextInFile(const QString &search_regex,
                                  const QString &replacement,
-                                 TextResource *text_resource);
+                                 TextResource *text_resource,
+                                 TextResource **changed_resource);
 
     static std::tuple<QString, int> PerformGlobalReplace(const QString &text,
             const QString &search_regex,

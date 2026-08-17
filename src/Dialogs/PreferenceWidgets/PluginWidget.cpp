@@ -56,6 +56,18 @@ PluginWidget::PluginWidget()
     m_qlcbxs.append(ui.comboBox_8);
     m_qlcbxs.append(ui.comboBox_9);
     m_qlcbxs.append(ui.comboBox_10);
+    //--------------------- modified: plugin slots 20 -----------------
+    m_qlcbxs.append(ui.comboBox_11);
+    m_qlcbxs.append(ui.comboBox_12);
+    m_qlcbxs.append(ui.comboBox_13);
+    m_qlcbxs.append(ui.comboBox_14);
+    m_qlcbxs.append(ui.comboBox_15);
+    m_qlcbxs.append(ui.comboBox_16);
+    m_qlcbxs.append(ui.comboBox_17);
+    m_qlcbxs.append(ui.comboBox_18);
+    m_qlcbxs.append(ui.comboBox_19);
+    m_qlcbxs.append(ui.comboBox_20);
+    //-----------------------------------------------------------------
 
     readSettings();
     connectSignalsToSlots();
@@ -82,7 +94,7 @@ PreferencesWidget::ResultActions PluginWidget::saveSettings()
     pdb->set_engine_path("python3.4", ui.editPathPy3->text());
 
 
-    // handle the 10 assignable plugin buttons
+    // handle the assignable plugin buttons
     QHash<QString, Plugin*> plugins = pdb->all_plugins();
     QStringList keys = plugins.keys();
     QStringList pluginmap;
@@ -179,10 +191,12 @@ void PluginWidget::readSettings()
 
     QStringList pluginmap = settings.pluginMap();
     // prevent segfaults from corrupted settings files
-    while (pluginmap.count() < 10) pluginmap.append(QString(""));
+    while (pluginmap.count() < SettingsStore::PLUGIN_SLOT_COUNT) pluginmap.append(QString("")); // modified: plugin slots 20
 
     // initialize each combo box current index from settings
-    for (int i=0; i < 10; i++) {
+    // modified: plugin slots 20 - bounded by both lists so a mismatch between
+    // PPluginWidget.ui and PLUGIN_SLOT_COUNT can never index out of range.
+    for (int i = 0; i < m_qlcbxs.count() && i < pluginmap.count(); i++) {
         int t = m_qlcbxs.at(i)->findText(pluginmap.at(i));
         m_qlcbxs.at(i)->setCurrentIndex(t);
     }

@@ -66,6 +66,12 @@ public:
 
     virtual void SetText(const QString &text);
 
+    virtual bool SetTextAsUndoableEdit(const QString &text);
+
+    virtual bool UndoLastEdit();
+
+    virtual bool RedoLastEdit();
+
     virtual bool LoadFromDisk();
 
     void SaveToDisk(bool book_wide_save = false);

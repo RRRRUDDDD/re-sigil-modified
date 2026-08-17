@@ -22,8 +22,12 @@
 #include <QKeySequence>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QReadLocker>
 #include <QTreeView>
 #include <QModelIndex>
+#include <QWriteLocker>
+
+#include <algorithm>
 #include "Misc/NumericItem.h"
 #include "Misc/SettingsStore.h"
 #include "Misc/Utility.h"
@@ -238,32 +242,151 @@ QString ReplacementChooser::GetPostContext(int match_end, const QString& text, i
 
 void ReplacementChooser::ApplyReplacements()
 {
-    // order of replacements is crucial
-    // replacements must be made in reverse offset order (bottom to top) of file
-    int rows = m_ItemModel->rowCount();
-    for (int i=0; i < rows; i++) {
-        QString bookpath = m_ItemModel->item(i, 0)->text();
-        QString match_segment = m_ItemModel->item(i,2)->data(Qt::UserRole+3).toString();
-        int startpos = m_ItemModel->item(i,1)->text().toInt();
-        int n = match_segment.length();
-        QString new_text = m_ItemModel->item(i,3)->data(Qt::UserRole+3).toString();
-        Resource * resource = m_Resources[bookpath];
-        HTMLResource *html_resource = qobject_cast<HTMLResource *>(resource);
-        TextResource *text_resource = qobject_cast<TextResource *>(resource);
-        if (html_resource) {
-            QWriteLocker locker(&html_resource->GetLock());
-            QString text = html_resource->GetText();
-            QString updated_text = text.replace(startpos, n, new_text);
-            html_resource->SetText(updated_text);
-            m_replacement_count++;
-        } else if (text_resource) {
-            QWriteLocker locker(&text_resource->GetLock());
-            QString text = text_resource->GetText();
-            QString updated_text = text.replace(startpos, n, new_text);
-            text_resource->SetText(updated_text);
-            m_replacement_count++;
+    struct Replacement {
+        int offset;
+        QString source;
+        QString replacement;
+    };
+
+    struct PreparedResource {
+        QString path;
+        TextResource *resource;
+        QString original;
+        QString updated;
+    };
+
+    m_changed_resources.clear();
+    m_replacement_count = 0;
+
+    QHash<QString, QList<Replacement>> replacements_by_path;
+    QStringList ordered_paths;
+    const int rows = m_ItemModel->rowCount();
+    for (int row = 0; row < rows; row++) {
+        const QString path = m_ItemModel->item(row, 0)->text();
+        if (!replacements_by_path.contains(path)) {
+            ordered_paths.append(path);
+        }
+
+        bool offset_ok = false;
+        const int offset = m_ItemModel->item(row, 1)->text().toInt(&offset_ok);
+        const QString source = m_ItemModel->item(row, 2)->data(Qt::UserRole + 3).toString();
+        const QString replacement = m_ItemModel->item(row, 3)->data(Qt::UserRole + 3).toString();
+        if (!offset_ok || offset < 0 || path.isEmpty()) {
+            QMessageBox::warning(this, tr("Replacement failed"),
+                                 tr("The replacement table contains an invalid row."));
+            return;
+        }
+
+        replacements_by_path[path].append({offset, source, replacement});
+    }
+
+    QList<PreparedResource> prepared;
+    int replacement_count = 0;
+    for (const QString &path : ordered_paths) {
+        TextResource *resource = qobject_cast<TextResource *>(m_Resources.value(path, nullptr));
+        if (!resource) {
+            QMessageBox::warning(this, tr("Replacement failed"),
+                                 tr("The replacement target is no longer available: %1").arg(path));
+            return;
+        }
+
+        resource->InitialLoad();
+        QString original;
+        {
+            QReadLocker locker(&resource->GetLock());
+            original = resource->GetText();
+        }
+
+        QList<Replacement> replacements = replacements_by_path.value(path);
+        std::stable_sort(replacements.begin(), replacements.end(),
+                         [](const Replacement &left, const Replacement &right) {
+                             return left.offset > right.offset;
+                         });
+
+        int previous_offset = original.length() + 1;
+        for (const Replacement &replacement : replacements) {
+            if (replacement.offset > original.length() ||
+                replacement.source.length() > original.length() - replacement.offset ||
+                original.mid(replacement.offset, replacement.source.length()) != replacement.source ||
+                replacement.offset + replacement.source.length() > previous_offset) {
+                QMessageBox::warning(
+                    this, tr("Replacement failed"),
+                    tr("The file changed before replacements could be applied: %1").arg(path));
+                return;
+            }
+            previous_offset = replacement.offset;
+        }
+
+        QString updated = original;
+        for (const Replacement &replacement : replacements) {
+            updated.replace(replacement.offset, replacement.source.length(), replacement.replacement);
+        }
+        prepared.append({path, resource, original, updated});
+        for (const Replacement &replacement : replacements) {
+            if (replacement.source != replacement.replacement) {
+                ++replacement_count;
+            }
         }
     }
+
+    if (prepared.isEmpty()) {
+        close();
+        return;
+    }
+
+    for (const PreparedResource &entry : prepared) {
+        QReadLocker locker(&entry.resource->GetLock());
+        if (entry.resource->GetText() != entry.original) {
+            locker.unlock();
+            QMessageBox::warning(
+                this, tr("Replacement failed"),
+                tr("The file changed before replacements could be applied: %1").arg(entry.path));
+            return;
+        }
+    }
+
+    QList<PreparedResource *> applied;
+    QString commit_error;
+    for (PreparedResource &entry : prepared) {
+        if (entry.updated == entry.original) continue;
+        bool edit_applied = false;
+        {
+            QWriteLocker locker(&entry.resource->GetLock());
+            if (entry.resource->GetText() != entry.original) {
+                commit_error = tr("The file changed before replacements could be applied: %1")
+                                   .arg(entry.path);
+                break;
+            }
+            edit_applied = entry.resource->SetTextAsUndoableEdit(entry.updated);
+            if (!edit_applied && entry.resource->GetText() != entry.original &&
+                (!entry.resource->UndoLastEdit() ||
+                 entry.resource->GetText() != entry.original)) {
+                entry.resource->SetText(entry.original);
+            }
+        }
+        if (!edit_applied) {
+            commit_error = tr("The replacement could not be recorded as an undoable edit.");
+            break;
+        }
+        applied.append(&entry);
+        m_changed_resources.append(entry.resource);
+    }
+
+    if (!commit_error.isEmpty()) {
+        for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
+            PreparedResource *entry = *it;
+            QWriteLocker locker(&entry->resource->GetLock());
+            if (!entry->resource->UndoLastEdit() ||
+                entry->resource->GetText() != entry->original) {
+                entry->resource->SetText(entry->original);
+            }
+        }
+        m_changed_resources.clear();
+        QMessageBox::warning(this, tr("Replacement failed"), commit_error);
+        return;
+    }
+
+    m_replacement_count = replacement_count;
     close();
 }
 

@@ -28,6 +28,7 @@
 #include <QPointer>
 #include <QDialog>
 #include <QHash>
+#include <QList>
 #include <QStandardItemModel>
 #include "Dialogs/StyledTextDelegate.h"
 #include "ui_ReplacementChooser.h"
@@ -35,6 +36,7 @@
 class QString;
 class QCloseEvent;
 class Resource;
+class TextResource;
 class FindReplace;
 
 class ReplacementChooser: public QDialog
@@ -46,6 +48,7 @@ public:
     ~ReplacementChooser();
 
     int GetReplacementCount() { return m_replacement_count; };
+    QList<TextResource*> GetChangedResources() const { return m_changed_resources; }
 
 public slots:
 
@@ -90,6 +93,8 @@ private:
     int m_replacement_count;
 
     int m_current_count;
+
+    QList<TextResource*> m_changed_resources;
     
     Ui::ReplacementChooser ui;
 };

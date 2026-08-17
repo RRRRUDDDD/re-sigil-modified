@@ -27,6 +27,9 @@
        <property name="tabKeyNavigation">
         <bool>false</bool>
        </property>
+       <property name="selectionMode">
+        <enum>QAbstractItemView::ExtendedSelection</enum>
+       </property>
        <property name="showDropIndicator" stdset="0">
         <bool>false</bool>
        </property>
@@ -54,6 +57,9 @@
          <property name="text">
           <string>Add Above</string>
          </property>
+         <property name="focusPolicy">
+          <enum>Qt::TabFocus</enum>
+         </property>
         </widget>
        </item>
        <item>
@@ -63,6 +69,9 @@
          </property>
          <property name="text">
           <string>Add Below</string>
+         </property>
+         <property name="focusPolicy">
+          <enum>Qt::TabFocus</enum>
          </property>
         </widget>
        </item>
@@ -74,6 +83,9 @@
          <property name="text">
           <string>Delete</string>
          </property>
+         <property name="focusPolicy">
+          <enum>Qt::TabFocus</enum>
+         </property>
         </widget>
        </item>
        <item>
@@ -83,6 +95,9 @@
          </property>
          <property name="text">
           <string>Select Target</string>
+         </property>
+         <property name="focusPolicy">
+          <enum>Qt::TabFocus</enum>
          </property>
         </widget>
        </item>
@@ -116,6 +131,9 @@ You can also use the left arrow key.</string>
            <property name="arrowType">
             <enum>Qt::LeftArrow</enum>
            </property>
+           <property name="focusPolicy">
+            <enum>Qt::TabFocus</enum>
+           </property>
           </widget>
          </item>
          <item>
@@ -128,6 +146,9 @@ You can also use the left arrow key.</string>
              <property name="arrowType">
               <enum>Qt::UpArrow</enum>
              </property>
+             <property name="focusPolicy">
+              <enum>Qt::TabFocus</enum>
+             </property>
             </widget>
            </item>
            <item>
@@ -137,6 +158,9 @@ You can also use the left arrow key.</string>
              </property>
              <property name="arrowType">
               <enum>Qt::DownArrow</enum>
+             </property>
+             <property name="focusPolicy">
+              <enum>Qt::TabFocus</enum>
              </property>
             </widget>
            </item>
@@ -153,6 +177,9 @@ You can also use the right arrow key.</string>
            </property>
            <property name="arrowType">
             <enum>Qt::RightArrow</enum>
+           </property>
+           <property name="focusPolicy">
+            <enum>Qt::TabFocus</enum>
            </property>
           </widget>
          </item>

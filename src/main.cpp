@@ -458,7 +458,7 @@ int main(int argc, char *argv[])
         SettingsStore settings;
 
         // Setup the qtbase_ translator and load the translation for the selected language
-        QTranslator qtbaseTranslator;
+        static QTranslator qtbaseTranslator;
         const QString qm_name_qtbase = QString("qtbase_%1").arg(settings.uiLanguage());
         // Run though all locations and stop once we find and are able to load
         // an appropriate Qt base translation.
@@ -472,7 +472,7 @@ int main(int argc, char *argv[])
         app.installTranslator(&qtbaseTranslator);
 
         // Setup the Sigil translator and load the translation for the selected language
-        QTranslator sigilTranslator;
+        static QTranslator sigilTranslator;
         const QString qm_name = QString("sigil_%1").arg(settings.uiLanguage());
         // Run though all locations and stop once we find and are able to load
         // an appropriate translation.
@@ -610,7 +610,7 @@ int main(int argc, char *argv[])
 #endif
 
         // The modified build deliberately disables Sigil's automatic update
-        // check so this modified build remains on the 1.9.30.X5B code line.
+        // check so this modified build remains on the 1.9.30.X5C code line.
 
         // select the icon theme to use
         QString RCCResourcePath;

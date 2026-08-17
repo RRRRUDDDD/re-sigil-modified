@@ -988,19 +988,24 @@ void SearchEditor::ForceClose()
 bool SearchEditor::MaybeSaveDialogSaysProceed(bool is_forced)
 {
     if (m_SearchEditorModel->IsDataModified()) {
-        QMessageBox::StandardButton button_pressed;
-        QMessageBox::StandardButtons buttons = is_forced ? QMessageBox::Save | QMessageBox::Discard
-                                               : QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel;
-        button_pressed = QMessageBox::warning(this,
-                                              tr("Sigil: Saved Searches"),
-                                              tr("The Search entries may have been modified.\n"
-                                                      "Do you want to save your changes?"),
-                                              buttons
-                                             );
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle(tr("Sigil: Saved Searches"));
+        msgBox.setText(tr("The Search entries may have been modified.\n"
+                         "Do you want to save your changes?"));
+        msgBox.setIcon(QMessageBox::Warning);
 
-        if (button_pressed == QMessageBox::Save) {
+        if (is_forced) {
+            msgBox.setStandardButtons(QMessageBox::Save | QMessageBox::Discard);
+        } else {
+            msgBox.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        }
+        msgBox.setDefaultButton(QMessageBox::Save);
+
+        int ret = msgBox.exec();
+
+        if (ret == QMessageBox::Save) {
             return Save();
-        } else if (button_pressed == QMessageBox::Cancel) {
+        } else if (ret == QMessageBox::Cancel) {
             return false;
         } else {
             m_SearchEditorModel->LoadInitialData();

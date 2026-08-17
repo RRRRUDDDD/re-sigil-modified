@@ -48,6 +48,15 @@ class SettingsStore : public QSettings
     Q_OBJECT
 
 public:
+    //--------------------- modified: plugin slots 20 -----------------
+    /**
+     * Number of quick launch plugin slots offered by the UI.
+     * Single source of truth for main.ui actions, the plugin toolbars,
+     * the Preferences combo boxes and the persisted plugin map length.
+     */
+    static constexpr int PLUGIN_SLOT_COUNT = 20;
+    //-----------------------------------------------------------------
+
     SettingsStore();
     SettingsStore(QString filename);
 

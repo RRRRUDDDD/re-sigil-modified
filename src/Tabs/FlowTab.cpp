@@ -1060,7 +1060,7 @@ void FlowTab::HeadingStyle(const QString &heading_type, bool preserve_attributes
         QChar last_char = heading_type[ heading_type.count() - 1 ];
 
         // For heading_type == "Heading #"
-        // --------------------------修改：多行添加块元素标签---------------------------
+        // --------------------------淇敼锛氬琛屾坊鍔犲潡鍏冪礌鏍囩---------------------------
         /*
         if (last_char.isDigit()) {
             m_wCodeView->FormatBlock("h" % QString(last_char), preserve_attributes);

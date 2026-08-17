@@ -88,6 +88,41 @@ void HTMLResource::SetText(const QString &text)
     TrackNewResources();
 }
 
+bool HTMLResource::SetTextAsUndoableEdit(const QString &text)
+{
+    emit TextChanging();
+
+    const bool editApplied = TextResource::SetTextAsUndoableEdit(text);
+
+    TrackNewResources();
+
+    return editApplied;
+}
+
+bool HTMLResource::UndoLastEdit()
+{
+    emit TextChanging();
+
+    if (!TextResource::UndoLastEdit()) {
+        return false;
+    }
+
+    TrackNewResources();
+    return true;
+}
+
+bool HTMLResource::RedoLastEdit()
+{
+    emit TextChanging();
+
+    if (!TextResource::RedoLastEdit()) {
+        return false;
+    }
+
+    TrackNewResources();
+    return true;
+}
+
 QString HTMLResource::GetTOCCache()
 {
     if (m_TOCCache.isEmpty()) {

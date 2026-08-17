@@ -78,3 +78,20 @@ QString TextDocument::toText()
 
     return txt;
 }
+
+void TextDocument::replaceTextAsSingleUndoStep(const QString &text)
+{
+    // Fast path: check character count first to avoid expensive string comparison
+    if (characterCount() - 1 == text.length()) {  // -1 for implicit end character
+        // Only perform expensive content comparison when lengths match
+        if (toText() == text) {
+            return;
+        }
+    }
+
+    QTextCursor cursor(this);
+    cursor.beginEditBlock();
+    cursor.select(QTextCursor::Document);
+    cursor.insertText(text);
+    cursor.endEditBlock();
+}

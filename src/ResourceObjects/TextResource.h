@@ -25,6 +25,7 @@
 #define TEXTRESOURCE_H
 
 #include <QtCore/QMutex>
+#include <QtCore/QtGlobal>
 #include "Widgets/TextDocument.h"
 #include "ResourceObjects/Resource.h"
 
@@ -63,6 +64,26 @@ public:
     virtual void SetText(const QString &text);
 
     /**
+     * Replaces the text as one QTextDocument undo command. This must be
+     * called on the GUI thread and is intended for user-visible edits.
+     */
+    virtual bool SetTextAsUndoableEdit(const QString &text);
+
+    /**
+     * Undoes the most recent text edit, if one is available.
+     *
+     * @return True when an undo command was applied.
+     */
+    virtual bool UndoLastEdit();
+
+    /**
+     * Redoes the most recently undone text edit, if one is available.
+     *
+     * @return True when a redo command was applied.
+     */
+    virtual bool RedoLastEdit();
+
+    /**
      * Returns a reference to the QTextDocument that can be read and written to
      * in consumers. If you need just read access, use GetTextDocumentForReading().
      *
@@ -83,6 +104,19 @@ public:
     virtual void InitialLoad();
 
     bool IsLoaded();
+
+    /**
+     * Returns the generation of non-undoable document resets.  A reset
+     * invalidates a batch edit because QTextDocument cannot restore it via
+     * its undo stack.
+     */
+    quint64 GetUndoResetGeneration() const;
+
+    /**
+     * Returns the process-wide sequence assigned to this resource's most
+     * recent document change.
+     */
+    quint64 GetEditRevision() const;
 
     // inherited
     virtual ResourceType Type() const;
@@ -133,6 +167,10 @@ private:
     TextDocument *m_TextDocument;
 
     bool m_IsLoaded;
+
+    quint64 m_UndoResetGeneration;
+
+    quint64 m_EditRevision;
 };
 
 #endif // TEXTRESOURCE_H
