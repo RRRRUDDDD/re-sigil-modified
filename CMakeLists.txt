@@ -154,3 +154,9 @@ add_subdirectory( internal/gumbo )
 
 add_subdirectory( 3rdparty/ )
 add_subdirectory( src/ )
+
+option(SIGIL_BUILD_SECURITY_TESTS "Build focused security regression tests" OFF)
+if(SIGIL_BUILD_SECURITY_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

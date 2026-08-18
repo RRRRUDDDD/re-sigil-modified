@@ -47,6 +47,7 @@
 #include <QRegularExpressionMatch>
 #include <QStringList>
 #include <QMessageBox>
+#include <QTemporaryDir>
 #include <QDateTime>
 #include <QDate>
 #include <QTime>
@@ -479,14 +480,45 @@ void ImportEPUB::ExtractContainer()
         throw (EPUBLoadParseError(QString(QObject::tr("Cannot unzip EPUB: %1")).arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
     }
 
+    // Keep untrusted output isolated until every entry passes its metadata and
+    // streaming checks.  Failure removes only this temporary directory; the
+    // FolderKeeper destination is untouched until extraction fully succeeds.
+    QTemporaryDir staging_dir(QDir(m_ExtractedFolderPath).filePath(".sigil-epub-unzip-XXXXXX"));
+    if (!staging_dir.isValid()) {
+        unzClose(zfile);
+        throw (EPUBLoadParseError(QString(QObject::tr("Cannot create a temporary directory to unzip EPUB: %1"))
+                                  .arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
+    }
+    const QString extraction_path = staging_dir.path();
+    ZipExtractionResourceLimiter limiter(ZipExtractionLimits::Default());
+    bool current_file_open = false;
+
+    const auto close_archive = [&]() {
+        if (current_file_open) {
+            unzCloseCurrentFile(zfile);
+            current_file_open = false;
+        }
+        unzClose(zfile);
+    };
+    const auto throw_limit_error = [&](const QString &file_name, const std::string &reason) {
+        close_archive();
+        throw EPUBLoadParseError(QString(QObject::tr("Cannot extract file \"%1\": ZIP resource limit exceeded: %2"))
+                                 .arg(file_name, QString::fromStdString(reason)).toStdString());
+    };
+
     res = unzGoToFirstFile(zfile);
 
     if (res == UNZ_OK) {
         do {
             // Get the name of the file in the archive.
             char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info;
-            unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH, NULL, 0, NULL, 0);
+            unz_file_info64 file_info = {};
+            if (unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH,
+                                        NULL, 0, NULL, 0) != UNZ_OK) {
+                close_archive();
+                throw (EPUBLoadParseError(QString(QObject::tr("Cannot inspect an entry in EPUB: %1"))
+                                          .arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
+            }
             QString qfile_name;
             QString cp437_file_name;
             qfile_name = QString::fromUtf8(file_name);
@@ -494,6 +526,18 @@ void ImportEPUB::ExtractContainer()
                 // General purpose bit 11 says the filename is utf-8 encoded. If not set then
                 // IBM 437 encoding might be used.
                 cp437_file_name = cp437->toUnicode(file_name);
+            }
+            const bool is_directory = file_info.uncompressed_size == 0 &&
+                                      qfile_name.endsWith('/');
+            const bool creates_alias = !is_directory &&
+                                       !cp437_file_name.isEmpty() &&
+                                       cp437_file_name != qfile_name;
+            std::string limit_error;
+            if (!limiter.BeginEntry(static_cast<uint64_t>(file_info.compressed_size),
+                                    static_cast<uint64_t>(file_info.uncompressed_size),
+                                    is_directory, creates_alias ? 2 : 1,
+                                    &limit_error)) {
+                throw_limit_error(qfile_name, limit_error);
             }
             QDate moddate = QDate(file_info.tmu_date.tm_year,
                                   file_info.tmu_date.tm_mon + 1,
@@ -544,22 +588,21 @@ void ImportEPUB::ExtractContainer()
                 }
 
                 if (evil_or_corrupt_epub) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
+                    close_archive();
                     throw (EPUBLoadParseError(QString(QObject::tr("Possible evil or corrupt epub file name: %1")).arg(original_path).toStdString()));
                 }
 
                 // We use the dir object to create the path in the temporary directory.
                 // Unfortunately, we need a dir ojbect to do this as it's not a static function.
-                QDir dir(m_ExtractedFolderPath);
+                QDir dir(extraction_path);
                 // Full file path in the temporary directory.
-                QString file_path = m_ExtractedFolderPath + "/" + qfile_name;
+                QString file_path = extraction_path + "/" + qfile_name;
                 QFileInfo qfile_info(file_path);
 
                 QString bookpath;
 
                 // Is this entry a directory?
-                if (file_info.uncompressed_size == 0 && qfile_name.endsWith('/')) {
+                if (is_directory) {
                     dir.mkpath(qfile_name);
                     continue;
                 } else {
@@ -576,16 +619,16 @@ void ImportEPUB::ExtractContainer()
 
                 // Open the file entry in the archive for reading.
                 if (unzOpenCurrentFile(zfile) != UNZ_OK) {
-                    unzClose(zfile);
+                    close_archive();
                     throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
                 }
+                current_file_open = true;
 
                 // Open the file on disk to write the entry in the archive to.
                 QFile entry(file_path);
 
                 if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
+                    close_archive();
                     throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
                 }
 
@@ -594,6 +637,12 @@ void ImportEPUB::ExtractContainer()
                 int read = 0;
 
                 while ((read = unzReadCurrentFile(zfile, buff, BUFF_SIZE)) > 0) {
+                    if (!limiter.AccountExtractedBytes(static_cast<uint64_t>(read),
+                                                       &limit_error)) {
+                        entry.close();
+                        entry.remove();
+                        throw_limit_error(qfile_name, limit_error);
+                    }
                     entry.write(buff, read);
                 }
 
@@ -604,20 +653,30 @@ void ImportEPUB::ExtractContainer()
 
                 // Read errors are marked by a negative read amount.
                 if (read < 0) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
+                    entry.remove();
+                    close_archive();
                     throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
                 }
 
                 // The file was read but the CRC did not match.
                 // We don't check the read file size vs the uncompressed file size
                 // because if they're different there should be a CRC error.
-                if (unzCloseCurrentFile(zfile) == UNZ_CRCERROR) {
+                const int close_result = unzCloseCurrentFile(zfile);
+                current_file_open = false;
+                if (close_result == UNZ_CRCERROR) {
+                    entry.remove();
                     unzClose(zfile);
                     throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
                 }
-                if (!cp437_file_name.isEmpty() && cp437_file_name != qfile_name) {
-                    QString cp437_file_path = m_ExtractedFolderPath + "/" + cp437_file_name;
+                if (creates_alias) {
+                    if (!limiter.AccountAdditionalOutputBytes(limiter.CurrentEntryBytes(),
+                                                              &limit_error)) {
+                        entry.remove();
+                        unzClose(zfile);
+                        throw EPUBLoadParseError(QString(QObject::tr("Cannot extract file \"%1\": ZIP resource limit exceeded: %2"))
+                                                 .arg(qfile_name, QString::fromStdString(limit_error)).toStdString());
+                    }
+                    QString cp437_file_path = extraction_path + "/" + cp437_file_name;
                     QFile::copy(file_path, cp437_file_path);
                 }
                 m_FileInfoFromZip[bookpath] = std::make_tuple(afilesize, afilecrc, modified);
@@ -626,11 +685,18 @@ void ImportEPUB::ExtractContainer()
     }
 
     if (res != UNZ_END_OF_LIST_OF_FILE) {
-        unzClose(zfile);
+        close_archive();
         throw (EPUBLoadParseError(QString(QObject::tr("Cannot open EPUB: %1")).arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
     }
 
     unzClose(zfile);
+
+    try {
+        Utility::CopyFiles(extraction_path, m_ExtractedFolderPath);
+    } catch (const CannotCopyFile &) {
+        throw (EPUBLoadParseError(QString(QObject::tr("Cannot finish extracting EPUB: %1"))
+                                  .arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
+    }
 }
 
 void ImportEPUB::LocateOPF()

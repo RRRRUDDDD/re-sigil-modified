@@ -45,6 +45,7 @@
 #include <QProcess>
 #include <QRegExp>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QStringList>
 #include <QStringRef>
 #include <QTextStream>
@@ -1014,7 +1015,46 @@ QString Utility::stdWStringToQString(const std::wstring &str)
 #endif
 
 
+namespace {
+
+bool CommitExtractedFiles(const QString &source_path, const QString &destination_path)
+{
+    QDir source(source_path);
+    QDir destination(destination_path);
+    source.setFilter(QDir::AllDirs |
+                     QDir::Files |
+                     QDir::NoDotAndDotDot |
+                     QDir::NoSymLinks |
+                     QDir::Hidden);
+
+    foreach (const QFileInfo &item, source.entryInfoList()) {
+        const QString destination_item = destination.filePath(item.fileName());
+        if (item.isFile()) {
+            // Plugin updates historically replace files in an existing plugin
+            // directory.  This runs only after the entire ZIP passed limits.
+            if (!Utility::ForceCopyFile(item.absoluteFilePath(), destination_item)) {
+                return false;
+            }
+        } else {
+            if (!destination.mkpath(item.fileName()) ||
+                !CommitExtractedFiles(item.absoluteFilePath(), destination_item)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+}
+
+
 bool Utility::UnZip(const QString &zippath, const QString &destpath)
+{
+    return UnZip(zippath, destpath, ZipExtractionLimits::Default());
+}
+
+bool Utility::UnZip(const QString &zippath, const QString &destpath,
+                    const ZipExtractionLimits &limits)
 {
     int res = 0;
     QDir dir(destpath);
@@ -1030,8 +1070,32 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
 #endif
 
     if ((zfile == NULL) || (!IsFileReadable(zippath)) || (!dir.exists())) {
+        if (zfile != NULL) {
+            unzClose(zfile);
+        }
         return false;
     }
+
+    // Extract into an isolated child first.  A rejected/corrupt ZIP therefore
+    // cannot leave partial files in, overwrite, or cause cleanup of an existing
+    // plugin directory.  QTemporaryDir removes only this invocation's files.
+    QTemporaryDir staging_dir(dir.filePath(".sigil-unzip-XXXXXX"));
+    if (!staging_dir.isValid()) {
+        unzClose(zfile);
+        return false;
+    }
+    const QString staging_path = staging_dir.path();
+    QDir staging_root(staging_path);
+    ZipExtractionResourceLimiter limiter(limits);
+    bool current_file_open = false;
+
+    const auto close_archive = [&]() {
+        if (current_file_open) {
+            unzCloseCurrentFile(zfile);
+            current_file_open = false;
+        }
+        unzClose(zfile);
+    };
 
     res = unzGoToFirstFile(zfile);
 
@@ -1039,8 +1103,12 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
         do {
             // Get the name of the file in the archive.
             char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info;
-            unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH, NULL, 0, NULL, 0);
+            unz_file_info64 file_info = {};
+            if (unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH,
+                                        NULL, 0, NULL, 0) != UNZ_OK) {
+                close_archive();
+                return false;
+            }
             QString qfile_name;
             QString cp437_file_name;
             qfile_name = QString::fromUtf8(file_name);
@@ -1048,6 +1116,20 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
                 // General purpose bit 11 says the filename is utf-8 encoded. If not set then
                 // IBM 437 encoding might be used.
                 cp437_file_name = cp437->toUnicode(file_name);
+            }
+
+            const bool is_directory = file_info.uncompressed_size == 0 &&
+                                      qfile_name.endsWith('/');
+            const bool creates_alias = !is_directory &&
+                                       !cp437_file_name.isEmpty() &&
+                                       cp437_file_name != qfile_name;
+            std::string limit_error;
+            if (!limiter.BeginEntry(static_cast<uint64_t>(file_info.compressed_size),
+                                    static_cast<uint64_t>(file_info.uncompressed_size),
+                                    is_directory, creates_alias ? 2 : 1,
+                                    &limit_error)) {
+                close_archive();
+                return false;
             }
 
             // If there is no file name then we can't do anything with it.
@@ -1084,8 +1166,7 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
                 }
 
                 if (evil_or_corrupt_epub) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
+                    close_archive();
                     // throw (UNZIPLoadParseError(QString(QObject::tr("Possible evil or corrupt zip file name: %1")).arg(original_path).toStdString()));
                     return false;
                 }
@@ -1093,29 +1174,29 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
                 // We use the dir object to create the path in the temporary directory.
                 // Unfortunately, we need a dir ojbect to do this as it's not a static function.
                 // Full file path in the temporary directory.
-                QString file_path = destpath + "/" + qfile_name;
+                QString file_path = staging_path + "/" + qfile_name;
                 QFileInfo qfile_info(file_path);
 
                 // Is this entry a directory?
-                if (file_info.uncompressed_size == 0 && qfile_name.endsWith('/')) {
-                    dir.mkpath(qfile_name);
+                if (is_directory) {
+                    staging_root.mkpath(qfile_name);
                     continue;
                 } else {
-                    if (!qfile_info.path().isEmpty()) dir.mkpath(qfile_info.path());
+                    if (!qfile_info.path().isEmpty()) staging_root.mkpath(qfile_info.path());
                 }
 
                 // Open the file entry in the archive for reading.
                 if (unzOpenCurrentFile(zfile) != UNZ_OK) {
-                    unzClose(zfile);
+                    close_archive();
                     return false;
                 }
+                current_file_open = true;
 
                 // Open the file on disk to write the entry in the archive to.
                 QFile entry(file_path);
 
                 if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
+                    close_archive();
                     return false;
                 }
 
@@ -1124,6 +1205,13 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
                 int read = 0;
 
                 while ((read = unzReadCurrentFile(zfile, buff, BUFF_SIZE)) > 0) {
+                    if (!limiter.AccountExtractedBytes(static_cast<uint64_t>(read),
+                                                       &limit_error)) {
+                        entry.close();
+                        entry.remove();
+                        close_archive();
+                        return false;
+                    }
                     entry.write(buff, read);
                 }
 
@@ -1131,21 +1219,30 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
 
                 // Read errors are marked by a negative read amount.
                 if (read < 0) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
+                    entry.remove();
+                    close_archive();
                     return false;
                 }
 
                 // The file was read but the CRC did not match.
                 // We don't check the read file size vs the uncompressed file size
                 // because if they're different there should be a CRC error.
-                if (unzCloseCurrentFile(zfile) == UNZ_CRCERROR) {
+                const int close_result = unzCloseCurrentFile(zfile);
+                current_file_open = false;
+                if (close_result == UNZ_CRCERROR) {
+                    entry.remove();
                     unzClose(zfile);
                     return false;
                 }
 
-                if (!cp437_file_name.isEmpty() && cp437_file_name != qfile_name) {
-                    QString cp437_file_path = destpath + "/" + cp437_file_name;
+                if (creates_alias) {
+                    if (!limiter.AccountAdditionalOutputBytes(limiter.CurrentEntryBytes(),
+                                                              &limit_error)) {
+                        entry.remove();
+                        unzClose(zfile);
+                        return false;
+                    }
+                    QString cp437_file_path = staging_path + "/" + cp437_file_name;
                     QFile::copy(file_path, cp437_file_path);
                 }
             }
@@ -1153,18 +1250,25 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
     }
 
     if (res != UNZ_END_OF_LIST_OF_FILE) {
-        unzClose(zfile);
+        close_archive();
         return false;
     }
 
     unzClose(zfile);
+
+    if (!CommitExtractedFiles(staging_path, destpath)) {
+        return false;
+    }
     return true;
 }
 
-QStringList Utility::ZipInspect(const QString &zippath)
+QStringList Utility::ZipInspect(const QString &zippath, bool *resource_limit_exceeded)
 {
     QStringList filelist;
     int res = 0;
+    if (resource_limit_exceeded) {
+        *resource_limit_exceeded = false;
+    }
 
     if (!cp437) {
         cp437 = new QCodePage437Codec();
@@ -1178,20 +1282,47 @@ QStringList Utility::ZipInspect(const QString &zippath)
 #endif
 
     if ((zfile == NULL) || (!IsFileReadable(zippath))) {
+        if (zfile != NULL) {
+            unzClose(zfile);
+        }
         return filelist;
     }
+    ZipExtractionResourceLimiter limiter(ZipExtractionLimits::Default());
     res = unzGoToFirstFile(zfile);
     if (res == UNZ_OK) {
         do {
             // Get the name of the file in the archive.
             char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info;
-            unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH, NULL, 0, NULL, 0);
+            unz_file_info64 file_info = {};
+            if (unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH,
+                                        NULL, 0, NULL, 0) != UNZ_OK) {
+                filelist.clear();
+                unzClose(zfile);
+                return filelist;
+            }
             QString qfile_name;
             QString cp437_file_name;
             qfile_name = QString::fromUtf8(file_name);
             if (!(file_info.flag & (1<<11))) {
                 cp437_file_name = cp437->toUnicode(file_name);
+            }
+
+            const bool is_directory = file_info.uncompressed_size == 0 &&
+                                      qfile_name.endsWith('/');
+            const bool creates_alias = !is_directory &&
+                                       !cp437_file_name.isEmpty() &&
+                                       cp437_file_name != qfile_name;
+            std::string limit_error;
+            if (!limiter.BeginEntry(static_cast<uint64_t>(file_info.compressed_size),
+                                    static_cast<uint64_t>(file_info.uncompressed_size),
+                                    is_directory, creates_alias ? 2 : 1,
+                                    &limit_error)) {
+                if (resource_limit_exceeded) {
+                    *resource_limit_exceeded = true;
+                }
+                filelist.clear();
+                unzClose(zfile);
+                return filelist;
             }
 
             // If there is no file name then we can't do anything with it.

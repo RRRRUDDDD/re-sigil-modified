@@ -32,6 +32,8 @@
 #include <QSet>
 #include <QStringList>
 
+#include "Misc/ZipExtractionLimits.h"
+
 class QStringRef;
 class QWidget;
 class QMenu;
@@ -216,7 +218,10 @@ public:
 #endif
 
     static bool UnZip(const QString &zippath, const QString &destdir);
-    static QStringList ZipInspect(const QString &zippath);
+    static bool UnZip(const QString &zippath, const QString &destdir,
+                      const ZipExtractionLimits &limits);
+    static QStringList ZipInspect(const QString &zippath,
+                                  bool *resource_limit_exceeded = NULL);
 
     // Generate relative path to destination from starting directory path
     // Both paths should be absolute and preferably cannonical
