@@ -20,6 +20,8 @@
 **
 *************************************************************************/
 
+#include <stdexcept>
+
 #include <QFileInfo>
 #include <QApplication>
 #include <QSignalMapper>
@@ -976,7 +978,15 @@ QStringList BookBrowser::AddExisting(bool only_multimedia, bool only_images)
             // Since we set the Book manually,
             // this call merely mutates our Book.
             bool extract_metadata = false;
-            html_import.GetBook(extract_metadata);
+            try {
+                html_import.GetBook(extract_metadata);
+            } catch (const std::runtime_error &import_error) {
+                Utility::DisplayStdErrorDialog(
+                    tr("Unable to import HTML file \"%1\".")
+                    .arg(QDir::toNativeSeparators(filepath)),
+                    QString::fromUtf8(import_error.what()));
+                continue;
+            }
             QStringList importedbookpaths = html_import.GetAddedBookPaths();
             DBG qDebug() << "In BookBrowser Add Existing adding bookpaths: " << importedbookpaths;
             Resource *added_resource = m_Book->GetFolderKeeper()->GetResourceByBookPath(importedbookpaths.at(0));

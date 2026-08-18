@@ -29,7 +29,6 @@
 #include <QHash>
 #include <QSet>
 #include <QStringList>
-#include <tuple>
 
 #include "Importers/Importer.h"
 #include "Misc/TempFolder.h"
@@ -51,6 +50,18 @@ public:
     virtual QSharedPointer<Book> GetBook(bool extract_metaata=true);
 
 private:
+    struct FileLoadResult {
+        bool success = false;
+        QString original_path;
+        QString loaded_path;
+        QString error;
+    };
+
+    struct FolderLoadResult {
+        bool success = false;
+        QStringList errors;
+    };
+
     /**
      * Extracts the EPUB file to a temporary folder.
      * The path to the the temp folder with the extracted files
@@ -110,20 +121,20 @@ private:
     /**
      * Loads the referenced files into the main folder of the book.
      *
-     * @return success 
+     * @return an explicit success/failure result with diagnostics
      */
-    bool LoadFolderStructure();
+    FolderLoadResult LoadFolderStructure();
 
     /**
      * Loads a single file.
      *
      * @param path An OPF-relative path to the file to load.
      * @param mimetype The mimetype of the file to load.
-     * @return A tuple where the first member is the old path to the file,
-     *         and the new member is the new, OEBPS-relative path to it.
+     * @return An explicit success/failure result containing the old and new
+     *         paths, or a diagnostic error when loading fails.
      */
-    std::tuple<QString, QString> LoadOneFile(const QString &path,
-                                        const QString &mimetype = QString());
+    FileLoadResult LoadOneFile(const QString &path,
+                               const QString &mimetype = QString());
 
     /**
      * Resolves an EPUB path and requires it to remain inside the extraction

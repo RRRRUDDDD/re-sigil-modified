@@ -30,7 +30,9 @@
 #include "iowin32.h"
 #endif
 
+#include <exception>
 #include <string>
+#include <tuple>
 
 #include <QApplication>
 #include <QtCore>
@@ -78,8 +80,6 @@
 
 const QString DUBLIN_CORE_NS             = "http://purl.org/dc/elements/1.1/";
 static const QString OEBPS_MIMETYPE      = "application/oebps-package+xml";
-static const QString UPDATE_ERROR_STRING = "SG_ERROR";
-static const QString EPUB_PATH_ERROR_PREFIX = "SG_EPUB_PATH_ERROR:";
 const QString NCX_MIMETYPE               = "application/x-dtbncx+xml";
 static const QString NCX_EXTENSION       = "ncx";
 const QString ADOBE_FONT_ALGO_ID         = "http://ns.adobe.com/pdf/enc#RC";
@@ -199,7 +199,12 @@ QSharedPointer<Book> ImportEPUB::GetBook(bool extract_metadata)
         QApplication::setOverrideCursor(Qt::WaitCursor);
     }
 
-    LoadFolderStructure();
+    const FolderLoadResult folder_result = LoadFolderStructure();
+    if (!folder_result.success) {
+        const QString error = tr("The following EPUB resources could not be loaded:\n%1")
+                               .arg(folder_result.errors.join("\n"));
+        throw EPUBLoadParseError(error.toStdString());
+    }
 
     const QList<Resource *> resources = m_Book->GetFolderKeeper()->GetResourceList();
 
@@ -1054,13 +1059,14 @@ void ImportEPUB::LoadInfrastructureFiles()
 }
 
 
-bool ImportEPUB::LoadFolderStructure()
+ImportEPUB::FolderLoadResult ImportEPUB::LoadFolderStructure()
 {
     QList<QString> keys = m_Files.keys();
     int num_files = keys.count();
-    bool success = true;
+    FolderLoadResult folder_result;
+    folder_result.success = true;
 
-    QFutureSynchronizer<std::tuple<QString, QString>> sync;
+    QFutureSynchronizer<FileLoadResult> sync;
 
     for (int i = 0; i < num_files; ++i) {
         QString id = keys.at(i);
@@ -1082,36 +1088,46 @@ bool ImportEPUB::LoadFolderStructure()
     }
 
     sync.waitForFinished();
-    QList<QFuture<std::tuple<QString, QString>>> futures = sync.futures();
+    QList<QFuture<FileLoadResult>> futures = sync.futures();
     int num_futures = futures.count();
 
     for (int i = 0; i < num_futures; ++i) {
-        std::tuple<QString, QString> result = futures.at(i).result();
-        if (std::get<1>(result).startsWith(EPUB_PATH_ERROR_PREFIX)) {
-            const QString error = std::get<1>(result).mid(EPUB_PATH_ERROR_PREFIX.length());
-            throw EPUBLoadParseError(error.toStdString());
-        }
-        if (std::get<0>(result) != std::get<1>(result)) {
-            qDebug() << "LoadFolderStructure Issue: " << std::get<0>(result) << std::get<1>(result);
-            success = false;
+        const FileLoadResult result = futures.at(i).result();
+        if (!result.success) {
+            folder_result.success = false;
+            folder_result.errors.append(result.error.isEmpty()
+                                        ? QObject::tr("Unable to load EPUB resource \"%1\".").arg(result.original_path)
+                                        : result.error);
         }
     }
 
-    return success;
+    return folder_result;
 }
 
 
-std::tuple<QString, QString> ImportEPUB::LoadOneFile(const QString &path, const QString &mimetype)
+ImportEPUB::FileLoadResult ImportEPUB::LoadOneFile(const QString &path, const QString &mimetype)
 {
+    FileLoadResult result;
+    result.success = false;
+    result.original_path = path;
+
+    QString fullfilepath;
+    QString currentpath;
+
     try {
         // Use opf relative href to create the book path (currentpath) for this file
         const QString candidate = QDir(QFileInfo(m_OPFFilePath).absolutePath()).absoluteFilePath(path);
-        QString fullfilepath = ResolveEpubPath(m_ExtractedFolderPath, candidate,
-                                               QObject::tr("resource before loading"), true);
-        QString currentpath = QDir(m_ExtractedFolderPath).relativeFilePath(fullfilepath);
+        fullfilepath = ResolveEpubPath(m_ExtractedFolderPath, candidate,
+                                       QObject::tr("resource before loading"), true);
+        currentpath = QDir(m_ExtractedFolderPath).relativeFilePath(fullfilepath);
         QString bookpath = currentpath;
         Resource *resource = m_Book->GetFolderKeeper()->AddContentFileToFolder(
                                  fullfilepath, false, mimetype, bookpath, QString(), m_ExtractedFolderPath);
+        if (!resource) {
+            result.error = QObject::tr("Cannot create or copy EPUB resource \"%1\" (source: %2).")
+                           .arg(path, currentpath);
+            return result;
+        }
         if (m_FileInfoFromZip.contains(bookpath)) {
             std::tuple<size_t, QString, QString> ainfo = m_FileInfoFromZip[bookpath];
             resource->SetSavedSize(std::get<0>(ainfo));
@@ -1121,14 +1137,21 @@ std::tuple<QString, QString> ImportEPUB::LoadOneFile(const QString &path, const 
         if (path == m_NavHref) {
             m_NavResource = resource;
         }
-        QString newpath = resource->GetRelativePath();
-        return std::make_tuple(currentpath, newpath);
+        result.success = true;
+        result.loaded_path = resource->GetRelativePath();
+        return result;
     } catch (EPUBLoadParseError &path_error) {
-        return std::make_tuple(UPDATE_ERROR_STRING,
-                               EPUB_PATH_ERROR_PREFIX + QString::fromUtf8(path_error.what()));
-    } catch (FileDoesNotExist&) {
-        return std::make_tuple(UPDATE_ERROR_STRING, UPDATE_ERROR_STRING);
+        result.error = QObject::tr("Cannot load EPUB resource \"%1\": %2")
+                       .arg(path, QString::fromUtf8(path_error.what()));
+    } catch (FileDoesNotExist &file_error) {
+        result.error = QObject::tr("EPUB manifest resource \"%1\" does not exist (source: %2).")
+                       .arg(path, QString::fromUtf8(file_error.what()));
+    } catch (const std::exception &error) {
+        result.error = QObject::tr("Cannot load EPUB resource \"%1\": %2")
+                       .arg(path, QString::fromUtf8(error.what()));
     }
+
+    return result;
 }
 
 

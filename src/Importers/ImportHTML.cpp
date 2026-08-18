@@ -20,8 +20,10 @@
 **
 *************************************************************************/
 
-#include <memory>
+#include <exception>
 #include <functional>
+#include <memory>
+#include <tuple>
 
 #include <QtCore>
 #include <QDir>
@@ -98,7 +100,15 @@ QSharedPointer<Book> ImportHTML::GetBook(bool extract_metadata)
     if (extract_metadata) {
         LoadMetadata(source);
     }
-    UpdateFiles(CreateHTMLResource(), source, LoadFolderStructure(source));
+    const int first_added_path = m_AddedBookPaths.count();
+    try {
+        HTMLResource *html_resource = CreateHTMLResource();
+        QHash<QString, QString> updates = LoadFolderStructure(source);
+        UpdateFiles(html_resource, source, updates);
+    } catch (...) {
+        RollbackAddedResources(first_added_path);
+        throw;
+    }
 
     // Before returning the new book, if it is epub3, make sure it has a nav
     if (m_EpubVersion.startsWith('3')) {
@@ -174,10 +184,38 @@ HTMLResource *ImportHTML::CreateHTMLResource()
     TempFolder tempfolder;
     QString fullfilepath = tempfolder.GetPath() + "/" + QFileInfo(m_FullFilePath).fileName();
     Utility::WriteUnicodeTextFile("TEMP_SOURCE", fullfilepath);
-    HTMLResource *resource = qobject_cast<HTMLResource *>(m_Book->GetFolderKeeper()->AddContentFileToFolder(fullfilepath));
+    Resource *added_resource = NULL;
+    try {
+        added_resource = m_Book->GetFolderKeeper()->AddContentFileToFolder(fullfilepath);
+    } catch (FileDoesNotExist &file_error) {
+        throw CannotCopyFile(QObject::tr("Cannot create HTML resource \"%1\" from \"%2\": %3")
+                             .arg(QFileInfo(m_FullFilePath).fileName(), fullfilepath,
+                                  QString::fromUtf8(file_error.what())).toStdString());
+    }
+    HTMLResource *resource = qobject_cast<HTMLResource *>(added_resource);
+    if (!resource) {
+        if (added_resource) {
+            added_resource->Delete();
+        }
+        throw CannotCopyFile(QObject::tr("Cannot create or copy HTML resource \"%1\" from \"%2\".")
+                             .arg(QFileInfo(m_FullFilePath).fileName(), fullfilepath).toStdString());
+    }
     resource->SetCurrentBookRelPath(m_FullFilePath);
     m_AddedBookPaths << resource->GetRelativePath();
     return resource;
+}
+
+
+void ImportHTML::RollbackAddedResources(int first_path_index)
+{
+    FolderKeeper *folder_keeper = m_Book->GetFolderKeeper();
+    for (int i = m_AddedBookPaths.count() - 1; i >= first_path_index; --i) {
+        Resource *resource = folder_keeper->GetResourceByBookPathNoThrow(m_AddedBookPaths.at(i));
+        if (resource) {
+            resource->Delete();
+        }
+        m_AddedBookPaths.removeAt(i);
+    }
 }
 
 
@@ -253,7 +291,7 @@ QHash<QString, QString> ImportHTML::LoadFolderStructure(const QString &source)
 {
     QStringList mediapaths = XhtmlDoc::GetPathsToMediaFiles(source);
     QStringList stylepaths = XhtmlDoc::GetPathsToStyleFiles(source);
-    QFutureSynchronizer<QHash<QString, QString>> sync;
+    QFutureSynchronizer<ResourceLoadResult> sync;
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)    
     sync.addFuture(QtConcurrent::run(this, &ImportHTML::LoadMediaFiles,  mediapaths));
     sync.addFuture(QtConcurrent::run(this, &ImportHTML::LoadStyleFiles,  stylepaths));
@@ -262,18 +300,28 @@ QHash<QString, QString> ImportHTML::LoadFolderStructure(const QString &source)
     sync.addFuture(QtConcurrent::run(&ImportHTML::LoadStyleFiles, this,  stylepaths));
 #endif
     sync.waitForFinished();
-    QList<QFuture<QHash<QString, QString>>> futures = sync.futures();
+    QList<QFuture<ResourceLoadResult>> futures = sync.futures();
     int num_futures = futures.count();
     QHash<QString, QString> updates;
+    QStringList errors;
+    bool success = true;
 
     for (int i = 0; i < num_futures; ++i) {
-        
+        const ResourceLoadResult result = futures.at(i).result();
 #if QT_VERSION < QT_VERSION_CHECK(5, 15, 0)
-        updates.unite(futures.at(i).result());
+        updates.unite(result.updates);
 #else
-        updates.insert(futures.at(i).result());
+        updates.insert(result.updates);
 #endif
-        
+        success = success && result.success;
+        m_AddedBookPaths.append(result.added_book_paths);
+        errors.append(result.errors);
+    }
+
+    if (!success) {
+        const QString error = QObject::tr("Cannot import resources referenced by HTML file \"%1\":\n%2")
+                              .arg(QDir::toNativeSeparators(m_FullFilePath), errors.join("\n"));
+        throw CannotCopyFile(error.toStdString());
     }
 
     return updates;
@@ -283,9 +331,10 @@ QHash<QString, QString> ImportHTML::LoadFolderStructure(const QString &source)
 // note file_paths here are hrefs to media files from the html file being imported 
 // that should be imported as well
 
-QHash<QString, QString> ImportHTML::LoadMediaFiles(const QStringList & file_paths)
+ImportHTML::ResourceLoadResult ImportHTML::LoadMediaFiles(const QStringList & file_paths)
 {
-    QHash<QString, QString> updates;
+    ResourceLoadResult load_result;
+    load_result.success = true;
     QFileInfo hinfo = QFileInfo(m_FullFilePath);
     QDir folder(hinfo.absoluteDir());
     // Load the media files (images, video, audio) into the book and
@@ -298,31 +347,45 @@ QHash<QString, QString> ImportHTML::LoadMediaFiles(const QStringList & file_path
             QString existing_book_path = m_Book->GetFolderKeeper()->GetBookPathByPathEnd(filename);
 
             if (m_IgnoreDuplicates && !existing_book_path.isEmpty()) {
-                newpath = newpath = existing_book_path;
+                newpath = existing_book_path;
             } else {
                 Resource * resource = m_Book->GetFolderKeeper()->AddContentFileToFolder(fullfilepath);
+                if (!resource) {
+                    // Keep processing the other references so the caller receives
+                    // a complete diagnostic list; LoadFolderStructure() raises
+                    // the collected errors instead of treating this as success.
+                    load_result.errors << QObject::tr("Cannot create or copy media resource \"%1\" (source: %2).")
+                                       .arg(file_path, fullfilepath);
+                    load_result.success = false;
+                    continue;
+                }
                 newpath = resource->GetRelativePath();
-                m_AddedBookPaths << newpath;
+                load_result.added_book_paths << newpath;
             }
 
-            updates[ fullfilepath ] = newpath;
+            load_result.updates[ fullfilepath ] = newpath;
         } catch (FileDoesNotExist&) {
             // Do not touch link if it is already broken
             QString target_file = hinfo.absolutePath() + "/" + file_path;
             target_file = Utility::resolveRelativeSegmentsInFilePath(target_file, "/");
-            updates[target_file] = "";
+            load_result.updates[target_file] = "";
             // Do nothing. If the referenced file does not exist,
             // well then we don't load it.
             // qDebug() << "broken link ImportHTML" << m_FullFilePath << file_path << target_file;
+        } catch (const std::exception &error) {
+            load_result.errors << QObject::tr("Cannot load media resource \"%1\": %2")
+                               .arg(file_path, QString::fromUtf8(error.what()));
+            load_result.success = false;
         }
     }
-    return updates;
+    return load_result;
 }
 
 
-QHash<QString, QString> ImportHTML::LoadStyleFiles(const QStringList & file_paths )
+ImportHTML::ResourceLoadResult ImportHTML::LoadStyleFiles(const QStringList & file_paths )
 {
-    QHash<QString, QString> updates;
+    ResourceLoadResult load_result;
+    load_result.success = true;
     QFileInfo hinfo = QFileInfo(m_FullFilePath);
     QDir folder(hinfo.absoluteDir());
     foreach(QString file_path, file_paths) {
@@ -336,21 +399,34 @@ QHash<QString, QString> ImportHTML::LoadStyleFiles(const QStringList & file_path
                 newpath = existing_book_path;
             } else {
                 Resource * resource = m_Book->GetFolderKeeper()->AddContentFileToFolder(fullfilepath);
+                if (!resource) {
+                    // Keep processing the other references so the caller receives
+                    // a complete diagnostic list; LoadFolderStructure() raises
+                    // the collected errors instead of treating this as success.
+                    load_result.errors << QObject::tr("Cannot create or copy stylesheet resource \"%1\" (source: %2).")
+                                       .arg(file_path, fullfilepath);
+                    load_result.success = false;
+                    continue;
+                }
                 newpath = resource->GetRelativePath();
-                m_AddedBookPaths << newpath;
+                load_result.added_book_paths << newpath;
             }
 
-            updates[ fullfilepath ] = newpath;
+            load_result.updates[ fullfilepath ] = newpath;
         } catch (FileDoesNotExist&) {
             // Do not touch link if it is already broken
             QString target_file = hinfo.absolutePath() + "/" + file_path;
             target_file = Utility::resolveRelativeSegmentsInFilePath(target_file, "/");
-            updates[target_file] = "";
+            load_result.updates[target_file] = "";
             // Do nothing. If the referenced file does not exist,
             // well then we don't load it.
             // qDebug() << "broken link ImportHTML" << m_FullFilePath << file_path << target_file;
+        } catch (const std::exception &error) {
+            load_result.errors << QObject::tr("Cannot load stylesheet resource \"%1\": %2")
+                               .arg(file_path, QString::fromUtf8(error.what()));
+            load_result.success = false;
         }
     }
 
-    return updates;
+    return load_result;
 }
