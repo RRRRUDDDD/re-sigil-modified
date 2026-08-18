@@ -132,14 +132,33 @@ Resource *FolderKeeper::AddContentFileToFolder(const QString &fullfilepath,
                                                bool update_opf, 
                                                const QString &mimetype, 
                                                const QString &bookpath,
-                                               const QString &folderpath)
+                                               const QString &folderpath,
+                                               const QString &allowed_source_root)
 {
-    if (!QFileInfo(fullfilepath).exists()) {
-        throw(FileDoesNotExist(fullfilepath.toStdString()));
+    QString source_file_path = fullfilepath;
+    const auto validate_epub_source = [allowed_source_root](const QString &candidate) {
+        if (allowed_source_root.isEmpty()) {
+            return candidate;
+        }
+
+        QString safe_path;
+        QString path_error;
+        if (!Utility::ResolvePathWithinRoot(allowed_source_root, allowed_source_root,
+                                            candidate, &safe_path, &path_error, true)) {
+            const QString error = QObject::tr("Invalid EPUB resource source path: \"%1\" (%2)")
+                                  .arg(candidate, path_error);
+            throw EPUBLoadParseError(error.toStdString());
+        }
+        return safe_path;
+    };
+
+    source_file_path = validate_epub_source(source_file_path);
+    if (!QFileInfo(source_file_path).exists()) {
+        throw(FileDoesNotExist(source_file_path.toStdString()));
     }
 
     // initialize base file information
-    QString norm_file_path = fullfilepath;
+    QString norm_file_path = source_file_path;
     QFileInfo fi(norm_file_path);
     QString filename = fi.fileName();
 
@@ -172,6 +191,11 @@ Resource *FolderKeeper::AddContentFileToFolder(const QString &fullfilepath,
 
         QMutexLocker locker(&m_AccessMutex);
 
+        // Revalidate immediately before Resource creation. This is separate
+        // from import-time resolution so a filesystem link cannot bypass the
+        // EPUB extraction-root boundary between the two stages.
+        source_file_path = validate_epub_source(source_file_path);
+
         if (!bookpath.isEmpty()) {
             // use the specified bookpath to determine both file name and location
             const QString starting_dir = Utility::startingDir(bookpath);
@@ -200,12 +224,12 @@ Resource *FolderKeeper::AddContentFileToFolder(const QString &fullfilepath,
             }
         }
 
-        if (fullfilepath.contains(FILE_EXCEPTIONS)) {
+        if (source_file_path.contains(FILE_EXCEPTIONS)) {
             // This is used for all files inside the META-INF directory
             // This is a big hack that assumes the new and old filepaths use root paths
             // of the same length. I can't see how to fix this without refactoring
             // a lot of the code to provide a more generalised interface.
-            new_file_path = m_FullPathToMainFolder % fullfilepath.right(fullfilepath.size() - m_FullPathToMainFolder.size());
+            new_file_path = m_FullPathToMainFolder % source_file_path.right(source_file_path.size() - m_FullPathToMainFolder.size());
             resource = new Resource(m_FullPathToMainFolder, new_file_path);
         } else if (resdesc == "MiscTextResource") {
             resource = new MiscTextResource(m_FullPathToMainFolder, new_file_path);
@@ -249,13 +273,19 @@ Resource *FolderKeeper::AddContentFileToFolder(const QString &fullfilepath,
     }
 
     // skip copy if unpacking zip already put it in the right place
-    if (fullfilepath != new_file_path) {
-        if (!QFile::copy(fullfilepath, new_file_path)) {
+    if (source_file_path != new_file_path) {
+        try {
+            source_file_path = validate_epub_source(source_file_path);
+        } catch (EPUBLoadParseError&) {
+            DiscardResourceRegistration(resource);
+            throw;
+        }
+        if (!QFile::copy(source_file_path, new_file_path)) {
             // QFile::copy refuses to overwrite an existing target. Plugins add
             // replacement files before the old ones are deleted, so a same-name
             // target on disk is expected here - overwrite it instead of failing.
             if (QFile::exists(new_file_path) && QFile::remove(new_file_path) &&
-                QFile::copy(fullfilepath, new_file_path)) {
+                QFile::copy(source_file_path, new_file_path)) {
                 // overwrote the stale file successfully
             } else {
                 DiscardResourceRegistration(resource);

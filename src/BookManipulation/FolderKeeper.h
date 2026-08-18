@@ -89,13 +89,16 @@ public:
      * @param mimetype   The mimetype for the associated file.
      * @param bookpath   The ebook root file relative href
      * @param folderpath The ebook root folder relative href
+     * @param allowed_source_root If set, fullfilepath must remain inside this
+     *                            directory before resource creation and copy.
      * @return The newly created resource.
      */
     Resource *AddContentFileToFolder(const QString &fullfilepath,
                                      bool update_opf = true,
                                      const QString &mimetype = QString(),
                                      const QString &bookpath = QString(),
-                                     const QString &folderpath = QString("\\"));
+                                     const QString &folderpath = QString("\\"),
+                                     const QString &allowed_source_root = QString());
 
     Resource *AddContentFromQByteArray(const QByteArray &data,
                                        QString filename,

@@ -170,6 +170,26 @@ public:
      */
     static QString URLDecodePath(const QString &path);
 
+    /**
+     * Resolves and validates a path against an allowed root directory.
+     * Relative paths are URL-decoded and resolved from base_path. Absolute
+     * candidates are only accepted when path_is_absolute is true. Existing
+     * paths are checked canonically so links cannot escape the allowed root.
+     *
+     * @param root_path The only directory the result may be in.
+     * @param base_path The directory relative paths are resolved from.
+     * @param path The EPUB-relative path or absolute candidate to validate.
+     * @param resolved_path Receives the normalized, safe absolute path.
+     * @param error_message Receives a diagnostic when validation fails.
+     * @param path_is_absolute Whether path is already an absolute candidate.
+     */
+    static bool ResolvePathWithinRoot(const QString &root_path,
+                                      const QString &base_path,
+                                      const QString &path,
+                                      QString *resolved_path,
+                                      QString *error_message = NULL,
+                                      bool path_is_absolute = false);
+
     static void DisplayStdErrorDialog(const QString &error_message, const QString &detailed_text = QString());
 
     static void DisplayStdWarningDialog(const QString &warning_message, const QString &detailed_text = QString());

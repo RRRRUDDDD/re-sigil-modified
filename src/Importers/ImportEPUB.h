@@ -117,13 +117,28 @@ private:
     /**
      * Loads a single file.
      *
-     * @param path A full path to the file to load.
+     * @param path An OPF-relative path to the file to load.
      * @param mimetype The mimetype of the file to load.
      * @return A tuple where the first member is the old path to the file,
      *         and the new member is the new, OEBPS-relative path to it.
      */
     std::tuple<QString, QString> LoadOneFile(const QString &path,
                                         const QString &mimetype = QString());
+
+    /**
+     * Resolves an EPUB path and requires it to remain inside the extraction
+     * directory. Invalid paths are reported as EPUB import errors.
+     */
+    QString ResolveEpubPath(const QString &base_path,
+                            const QString &path,
+                            const QString &context,
+                            bool path_is_absolute = false) const;
+
+    // Resolves local hrefs and returns false for intentionally external URLs.
+    bool ResolveLocalEpubHref(const QString &base_path,
+                              const QString &href,
+                              const QString &context,
+                              QString *resolved_path) const;
 
     /**
      * Performs the necessary modifications to the OPF

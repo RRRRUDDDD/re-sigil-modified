@@ -79,6 +79,85 @@
 
 static const QString URL_SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-/~";
 
+namespace {
+
+Qt::CaseSensitivity FilePathCaseSensitivity()
+{
+#ifdef Q_OS_WIN32
+    return Qt::CaseInsensitive;
+#else
+    return Qt::CaseSensitive;
+#endif
+}
+
+
+QString NormalizedAbsolutePath(const QString &path)
+{
+    return QDir::cleanPath(QFileInfo(QDir::fromNativeSeparators(path)).absoluteFilePath());
+}
+
+
+bool PathIsWithinRoot(const QString &root_path, const QString &candidate_path)
+{
+    const QString root = QDir::cleanPath(QDir::fromNativeSeparators(root_path));
+    const QString candidate = QDir::cleanPath(QDir::fromNativeSeparators(candidate_path));
+    const Qt::CaseSensitivity sensitivity = FilePathCaseSensitivity();
+
+    if (candidate.compare(root, sensitivity) == 0) {
+        return true;
+    }
+
+    QString root_prefix(root);
+    if (!root_prefix.endsWith('/')) {
+        root_prefix.append('/');
+    }
+    return candidate.startsWith(root_prefix, sensitivity);
+}
+
+
+// Returns an empty string when no existing ancestor can be canonicalized.
+// For a missing final path, canonicalize its nearest existing ancestor and
+// append the missing segments so symlinked parent directories are still seen.
+QString CanonicalPathUsingExistingAncestor(const QString &absolute_path)
+{
+    const QString normalized = NormalizedAbsolutePath(absolute_path);
+    QFileInfo info(normalized);
+    const QString direct_canonical = info.canonicalFilePath();
+    if (!direct_canonical.isEmpty()) {
+        return QDir::cleanPath(QDir::fromNativeSeparators(direct_canonical));
+    }
+
+    QString current = normalized;
+    QStringList missing_segments;
+    while (!current.isEmpty()) {
+        QFileInfo current_info(current);
+        if (current_info.exists()) {
+            const QString ancestor_canonical = current_info.canonicalFilePath();
+            if (ancestor_canonical.isEmpty()) {
+                return QString();
+            }
+
+            QString result = QDir::cleanPath(QDir::fromNativeSeparators(ancestor_canonical));
+            foreach(const QString &segment, missing_segments) {
+                result = QDir::cleanPath(result + "/" + segment);
+            }
+            return result;
+        }
+
+        const QString segment = current_info.fileName();
+        const QString parent = QDir::cleanPath(current_info.absolutePath());
+        if (segment.isEmpty() || parent == current) {
+            break;
+        }
+        missing_segments.prepend(segment);
+        current = parent;
+    }
+
+    return QString();
+}
+
+}
+
 static const QString DARK_STYLE =
     "<style id=\"Sigil_Injected\">:root { background-color: %1; color: %2; } ::-webkit-scrollbar { display: none; }</style>"
     "<link rel=\"stylesheet\" type=\"text/css\" href=\"%3\" />";
@@ -699,6 +778,99 @@ QString Utility::URLDecodePath(const QString &path)
     // url encoded and if found try to xml decode them first
     apath = DecodeXML(apath);
     return QUrl::fromPercentEncoding(apath.toUtf8());
+}
+
+
+bool Utility::ResolvePathWithinRoot(const QString &root_path,
+                                    const QString &base_path,
+                                    const QString &path,
+                                    QString *resolved_path,
+                                    QString *error_message,
+                                    bool path_is_absolute)
+{
+    if (resolved_path) {
+        resolved_path->clear();
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+
+    const auto fail = [error_message](const QString &message) {
+        if (error_message) {
+            *error_message = message;
+        }
+        return false;
+    };
+
+    if (root_path.isEmpty()) {
+        return fail(tr("the allowed root directory is empty"));
+    }
+    if (base_path.isEmpty()) {
+        return fail(tr("the base directory is empty"));
+    }
+    if (path.isEmpty()) {
+        return fail(tr("the path is empty"));
+    }
+
+    const QString root = NormalizedAbsolutePath(root_path);
+    const QString base = NormalizedAbsolutePath(base_path);
+    if (!PathIsWithinRoot(root, base)) {
+        return fail(tr("the base directory is outside the allowed root"));
+    }
+
+    QString candidate;
+    if (path_is_absolute) {
+        const QString normalized_input = QDir::fromNativeSeparators(path);
+        if (!QFileInfo(normalized_input).isAbsolute()) {
+            return fail(tr("the path is not absolute"));
+        }
+        candidate = NormalizedAbsolutePath(normalized_input);
+    } else {
+        const QString decoded_path = URLDecodePath(path);
+        if (decoded_path.isEmpty()) {
+            return fail(tr("the decoded path is empty"));
+        }
+        if (decoded_path.contains(QChar(QChar::Null))) {
+            return fail(tr("the path contains a null character"));
+        }
+        if (decoded_path.contains('\\')) {
+            return fail(tr("backslash path separators are not valid in an EPUB path"));
+        }
+        if (QDir::isAbsolutePath(decoded_path) || decoded_path.startsWith('/') ||
+            QRegularExpression("^[A-Za-z][A-Za-z0-9+.-]*:").match(decoded_path).hasMatch()) {
+            return fail(tr("absolute, drive-letter, UNC, and scheme paths are not allowed"));
+        }
+        candidate = QDir::cleanPath(base + "/" + decoded_path);
+    }
+
+    if (!PathIsWithinRoot(root, candidate)) {
+        return fail(tr("the normalized path escapes the allowed root"));
+    }
+
+    const QString canonical_root = CanonicalPathUsingExistingAncestor(root);
+    const QString canonical_base = CanonicalPathUsingExistingAncestor(base);
+    const QString canonical_candidate = CanonicalPathUsingExistingAncestor(candidate);
+
+    if (canonical_root.isEmpty()) {
+        return fail(tr("the allowed root directory could not be canonicalized"));
+    }
+    if (canonical_base.isEmpty()) {
+        return fail(tr("the base directory could not be canonicalized"));
+    }
+    if (canonical_candidate.isEmpty()) {
+        return fail(tr("the path or its nearest existing parent could not be canonicalized"));
+    }
+    if (!PathIsWithinRoot(canonical_root, canonical_base)) {
+        return fail(tr("the canonical base directory is outside the allowed root"));
+    }
+    if (!PathIsWithinRoot(canonical_root, canonical_candidate)) {
+        return fail(tr("the canonical path escapes the allowed root through a filesystem link"));
+    }
+
+    if (resolved_path) {
+        *resolved_path = candidate;
+    }
+    return true;
 }
 
 
