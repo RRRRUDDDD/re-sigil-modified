@@ -24,6 +24,7 @@
 #include <QApplication>
 #include <QSignalMapper>
 #include <QFileDialog>
+#include <QInputDialog>
 #include <QMenu>
 #include <QMessageBox>
 #include <QTreeView>
@@ -87,6 +88,7 @@ BookBrowser::BookBrowser(QWidget *parent)
     m_OPFModel(new OPFModel(this)),
     m_ContextMenu(new QMenu(this)),
     m_FontObfuscationContextMenu(new QMenu(this)),
+    m_ReadingOrderContextMenu(new QMenu(this)),
     m_OpenWithContextMenu(new QMenu(this)),
     m_openWithMapper(new QSignalMapper(this)),
     m_LastContextMenuType(Resource::GenericResourceType),
@@ -94,6 +96,7 @@ BookBrowser::BookBrowser(QWidget *parent)
     m_MovedResource(NULL)
 {
     m_FontObfuscationContextMenu->setTitle(tr("Font Obfuscation"));
+    m_ReadingOrderContextMenu->setTitle(tr("Move in Reading Order"));
     m_OpenWithContextMenu->setTitle(tr("Open With"));
     setWidget(m_TreeView);
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -277,6 +280,99 @@ void BookBrowser::SortHTML()
     QList <QModelIndex> indexList = m_TreeView->selectionModel()->selectedRows(0);
     m_OPFModel->SortHTML(indexList);
     SelectResources(resources);
+}
+
+void BookBrowser::MoveSelectedHTMLBefore()
+{
+    MoveSelectedHTMLRelative(false);
+}
+
+void BookBrowser::MoveSelectedHTMLAfter()
+{
+    MoveSelectedHTMLRelative(true);
+}
+
+void BookBrowser::MoveSelectedHTMLRelative(bool move_after)
+{
+    QList<Resource *> selected_resources = ValidSelectedHTMLResources();
+    QList<Resource *> all_resources = AllHTMLResources();
+
+    if (selected_resources.isEmpty() || selected_resources.count() >= all_resources.count()) {
+        return;
+    }
+
+    QList<Resource *> target_resources;
+    QStringList target_paths;
+    foreach(Resource *resource, all_resources) {
+        if (!selected_resources.contains(resource)) {
+            target_resources.append(resource);
+            target_paths.append(resource->GetRelativePath());
+        }
+    }
+
+    if (target_resources.isEmpty()) {
+        return;
+    }
+
+    bool accepted = false;
+    QString prompt = move_after ?
+                     tr("Select the HTML file to move the selected file(s) after:") :
+                     tr("Select the HTML file to move the selected file(s) before:");
+    QString target_path = QInputDialog::getItem(this,
+                                                tr("Move in Reading Order"),
+                                                prompt,
+                                                target_paths,
+                                                0,
+                                                false,
+                                                &accepted);
+
+    if (!accepted) {
+        return;
+    }
+
+    int target_choice = target_paths.indexOf(target_path);
+    if (target_choice < 0 || target_choice >= target_resources.count()) {
+        return;
+    }
+
+    Resource *target_resource = target_resources.at(target_choice);
+    QList<Resource *> reordered_resources = all_resources;
+    foreach(Resource *resource, selected_resources) {
+        reordered_resources.removeOne(resource);
+    }
+
+    int insertion_index = reordered_resources.indexOf(target_resource);
+    if (insertion_index < 0) {
+        return;
+    }
+    if (move_after) {
+        insertion_index++;
+    }
+
+    foreach(Resource *resource, selected_resources) {
+        reordered_resources.insert(insertion_index++, resource);
+    }
+
+    if (reordered_resources == all_resources) {
+        return;
+    }
+
+    QList<HTMLResource *> reordered_html_resources;
+    foreach(Resource *resource, reordered_resources) {
+        HTMLResource *html_resource = qobject_cast<HTMLResource *>(resource);
+        if (html_resource == NULL) {
+            return;
+        }
+        reordered_html_resources.append(html_resource);
+    }
+
+    int scroll_y = m_TreeView->verticalScrollBar()->value();
+    m_Book->GetOPF()->UpdateSpineOrder(reordered_html_resources);
+    emit BookContentModified();
+    m_OPFModel->Refresh();
+    SelectResources(selected_resources);
+    m_TreeView->verticalScrollBar()->setSliderPosition(scroll_y);
+    emit ShowStatusMessageRequest(tr("Selected HTML file(s) moved in the reading order."));
 }
 
 void BookBrowser::RenumberTOC()
@@ -1888,6 +1984,8 @@ void BookBrowser::CreateContextMenuActions()
     m_AdobesObfuscationMethod = new QAction(tr("Use Adobe's Method"),    this);
     m_IdpfsObfuscationMethod  = new QAction(tr("Use IDPF's Method"),     this);
     m_SortHTML                = new QAction(tr("Sort") + "...",          this);
+    m_MoveHTMLBefore          = new QAction(tr("Move Before HTML File..."), this);
+    m_MoveHTMLAfter           = new QAction(tr("Move After HTML File..."),  this);
     m_RenumberTOC             = new QAction(tr("Renumber TOC Entries"),  this);
     m_LinkStylesheets         = new QAction(tr("Link Stylesheets..."),   this);
     m_LinkJavascripts         = new QAction(tr("Link Javascripts..."),   this);
@@ -1903,6 +2001,8 @@ void BookBrowser::CreateContextMenuActions()
     m_InsertFileToDocument1    = new QAction(tr("Insert Into HTML/CSS File"), this);
     m_InsertFileToDocument2    = new QAction(tr("Insert Into HTML File"),     this);
     m_InsertFileToDocument3    = new QAction(tr("Insert Into CSS File"),      this);
+    m_ReadingOrderContextMenu->addAction(m_MoveHTMLBefore);
+    m_ReadingOrderContextMenu->addAction(m_MoveHTMLAfter);
     m_CoverImage             ->setCheckable(true);
     m_NoObfuscationMethod    ->setCheckable(true);
     m_AdobesObfuscationMethod->setCheckable(true);
@@ -1981,6 +2081,8 @@ bool BookBrowser::SuccessfullySetupContextMenu(const QPoint &point)
                                  AllHTMLResources().at(0) != ValidSelectedResources().at(0)));
             m_ContextMenu->addAction(m_SortHTML);
             m_SortHTML->setEnabled(item_count > 1);
+            m_ContextMenu->addMenu(m_ReadingOrderContextMenu);
+            m_ReadingOrderContextMenu->setEnabled(AllHTMLResources().count() > item_count);
             m_ContextMenu->addAction(m_LinkStylesheets);
             m_LinkStylesheets->setEnabled(AllCSSResources().count() > 0);
             m_ContextMenu->addAction(m_LinkJavascripts);
@@ -2185,6 +2287,8 @@ void BookBrowser::ConnectSignalsToSlots()
     connect(m_AddNewHTML,              SIGNAL(triggered()), this, SLOT(AddNewHTML()));
     connect(m_RenumberTOC,             SIGNAL(triggered()), this, SLOT(RenumberTOC()));
     connect(m_SortHTML,                SIGNAL(triggered()), this, SLOT(SortHTML()));
+    connect(m_MoveHTMLBefore,          SIGNAL(triggered()), this, SLOT(MoveSelectedHTMLBefore()));
+    connect(m_MoveHTMLAfter,           SIGNAL(triggered()), this, SLOT(MoveSelectedHTMLAfter()));
     connect(m_AddNewCSS,               SIGNAL(triggered()), this, SLOT(AddNewCSS()));
     connect(m_AddNewJS,                SIGNAL(triggered()), this, SLOT(AddNewJS()));
     connect(m_AddNewSVG,               SIGNAL(triggered()), this, SLOT(AddNewSVG()));
