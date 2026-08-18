@@ -335,39 +335,26 @@ void BookBrowser::MoveSelectedHTMLRelative(bool move_after)
         return;
     }
 
-    Resource *target_resource = target_resources.at(target_choice);
-    QList<Resource *> reordered_resources = all_resources;
+    QList<HTMLResource *> selected_html_resources;
     foreach(Resource *resource, selected_resources) {
-        reordered_resources.removeOne(resource);
-    }
-
-    int insertion_index = reordered_resources.indexOf(target_resource);
-    if (insertion_index < 0) {
-        return;
-    }
-    if (move_after) {
-        insertion_index++;
-    }
-
-    foreach(Resource *resource, selected_resources) {
-        reordered_resources.insert(insertion_index++, resource);
-    }
-
-    if (reordered_resources == all_resources) {
-        return;
-    }
-
-    QList<HTMLResource *> reordered_html_resources;
-    foreach(Resource *resource, reordered_resources) {
         HTMLResource *html_resource = qobject_cast<HTMLResource *>(resource);
         if (html_resource == NULL) {
             return;
         }
-        reordered_html_resources.append(html_resource);
+        selected_html_resources.append(html_resource);
+    }
+
+    HTMLResource *target_html_resource = qobject_cast<HTMLResource *>(target_resources.at(target_choice));
+    if (target_html_resource == NULL) {
+        return;
     }
 
     int scroll_y = m_TreeView->verticalScrollBar()->value();
-    m_Book->GetOPF()->UpdateSpineOrder(reordered_html_resources);
+    if (!m_Book->GetOPF()->MoveReadingOrder(selected_html_resources,
+                                            target_html_resource,
+                                            move_after)) {
+        return;
+    }
     emit BookContentModified();
     m_OPFModel->Refresh();
     SelectResources(selected_resources);

@@ -289,6 +289,92 @@ void OPFResource::MoveReadingOrder(const HTMLResource* from_resource, const HTML
     UpdateText(p);
 }
 
+bool OPFResource::MoveReadingOrder(const QList<HTMLResource *> &from_resources,
+                                   const HTMLResource *target_resource,
+                                   bool move_after)
+{
+    QWriteLocker locker(&GetLock());
+    if (from_resources.isEmpty() || target_resource == NULL) {
+        return false;
+    }
+
+    QString source = CleanSource::ProcessXML(GetText(), "application/oebps-package+xml");
+    OPFParser p;
+    p.parse(source);
+
+    const Resource *target_res = static_cast<const Resource *>(target_resource);
+    QString target_id = GetResourceManifestID(target_res, p);
+    if (target_id.isEmpty()) {
+        return false;
+    }
+
+    QStringList from_ids;
+    QList<SpineEntry> moved_entries;
+    foreach(HTMLResource *from_resource, from_resources) {
+        if (from_resource == NULL) {
+            return false;
+        }
+
+        const Resource *from_res = static_cast<const Resource *>(from_resource);
+        QString from_id = GetResourceManifestID(from_res, p);
+        if (from_id.isEmpty() || from_id == target_id || from_ids.contains(from_id)) {
+            return false;
+        }
+
+        int found = -1;
+        for (int i = 0; i < p.m_spine.count(); ++i) {
+            if (p.m_spine.at(i).m_idref == from_id) {
+                if (found >= 0) {
+                    return false;
+                }
+                found = i;
+            }
+        }
+        if (found < 0) {
+            return false;
+        }
+
+        from_ids.append(from_id);
+        moved_entries.append(p.m_spine.at(found));
+    }
+
+    QList<SpineEntry> original_spine = p.m_spine;
+    for (int i = p.m_spine.count() - 1; i >= 0; --i) {
+        if (from_ids.contains(p.m_spine.at(i).m_idref)) {
+            p.m_spine.removeAt(i);
+        }
+    }
+
+    int target_position = -1;
+    for (int i = 0; i < p.m_spine.count(); ++i) {
+        if (p.m_spine.at(i).m_idref == target_id) {
+            if (target_position >= 0) {
+                return false;
+            }
+            target_position = i;
+        }
+    }
+    if (target_position < 0) {
+        return false;
+    }
+
+    int insertion_position = target_position + (move_after ? 1 : 0);
+    foreach(const SpineEntry &entry, moved_entries) {
+        p.m_spine.insert(insertion_position++, entry);
+    }
+
+    bool changed = original_spine.count() != p.m_spine.count();
+    for (int i = 0; !changed && i < p.m_spine.count(); ++i) {
+        changed = original_spine.at(i).m_idref != p.m_spine.at(i).m_idref;
+    }
+    if (!changed) {
+        return false;
+    }
+
+    UpdateText(p);
+    return true;
+}
+
 
 QString OPFResource::GetMainIdentifierValue() const
 {

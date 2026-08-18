@@ -72,6 +72,16 @@ public:
     void ClearSemanticCodesInGuide();
 
     void MoveReadingOrder(const HTMLResource* from_htmlresource, const HTMLResource* to_after_htmlresource);
+
+    /**
+     * Moves existing HTML spine entries as an ordered block relative to a target entry.
+     * All other spine entries and itemref attributes are preserved.
+     *
+     * @return true if the spine order changed, otherwise false.
+     */
+    bool MoveReadingOrder(const QList<HTMLResource *> &from_htmlresources,
+                          const HTMLResource *target_htmlresource,
+                          bool move_after);
     int GetReadingOrder(const HTMLResource *html_resource) const;
     QHash <Resource *, int> GetReadingOrderAll( const QList <Resource *> resources);
 
