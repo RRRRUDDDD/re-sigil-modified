@@ -381,7 +381,11 @@ bool OPFModel:: RenameResourceList(const QList<Resource *> &resources, const QSt
 
         bool rename_success = false;
         //------------------------------------ 修改：批量重命名 ---------------------------------
-        disconnect(resource, SIGNAL(Renamed(const Resource*, QString)), m_Book->GetFolderKeeper(), SLOT(ResourceRenamed(const Resource*, QString))); // 取消资源文件对FolderKeeper发送Renamed信号
+        FolderKeeper *folder_keeper = m_Book->GetFolderKeeper();
+        // 取消资源文件对FolderKeeper发送Renamed信号
+        const bool had_folder_keeper_connection =
+            disconnect(resource, SIGNAL(Renamed(const Resource*, QString)),
+                       folder_keeper, SLOT(ResourceRenamed(const Resource*, QString)));
         QString old_full_path = resource->GetFullPath();  // 提前通过GetFullPath()保存旧路径。在RenameTo()之后，GetFullPath()的值会更改为新值，必须提前保存旧值。
         //---------------------------------------------------------------------------------------
         // special case the OPFResource and the NCXResource
@@ -398,6 +402,16 @@ bool OPFModel:: RenameResourceList(const QList<Resource *> &resources, const QSt
         } else {
             rename_success = resource->RenameTo(new_filename_with_extension);
         }
+        // Restore the FolderKeeper connection for both successful and failed
+        // renames.  RenameTo() emits Renamed only after the on-disk rename
+        // succeeds; keeping the connection suspended on failure would leave
+        // future renames disconnected permanently.
+        if (had_folder_keeper_connection) {
+            connect(resource, SIGNAL(Renamed(const Resource *, QString)),
+                    folder_keeper, SLOT(ResourceRenamed(const Resource *, QString)),
+                    Qt::DirectConnection);
+        }
+
         if (!rename_success) {
             if (ss.showFullPathOn()) {
                 not_renamed.append(resource->GetRelativePath());
@@ -409,12 +423,13 @@ bool OPFModel:: RenameResourceList(const QList<Resource *> &resources, const QSt
         // -------- 修改：批量重命名 ---------
         valid_resources << resource;
         old_full_paths << old_full_path; 
-        connect(resource, SIGNAL(Renamed(const Resource*, QString)), m_Book->GetFolderKeeper(), SLOT(ResourceRenamed(const Resource*, QString))); //恢复Renamed信号，保证 ResourceRenamed 调用正常。
         // -----------------------------------
         update[ old_bookpath ] = resource->GetRelativePath();
     }
 
-    m_Book->GetFolderKeeper()->BulkResourceRenamed(valid_resources, old_full_paths); //修改：批量重命名
+    if (!valid_resources.isEmpty()) {
+        m_Book->GetFolderKeeper()->BulkResourceRenamed(valid_resources, old_full_paths); //修改：批量重命名
+    }
 
     if (update.count() > 0) {
         //UniversalUpdates::PerformUniversalUpdates 更新文件中关联的链接。
