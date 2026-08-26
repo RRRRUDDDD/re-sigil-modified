@@ -38,6 +38,7 @@
 #include "Misc/SettingsStore.h"
 #include "Misc/Utility.h"
 #include "ResourceObjects/HTMLResource.h"
+#include "ResourceObjects/NCXResource.h"
 #include "ResourceObjects/OPFResource.h"
 #include "ResourceObjects/NavProcessor.h"
 #include "ResourceObjects/Resource.h"
@@ -114,13 +115,21 @@ void EditTOC::CreateTOCModel()
 
 void EditTOC::Save()
 {
+    TOCModel::TOCEntry toc_root = ConvertTableToEntries();
     QString version = m_Book->GetConstOPF()->GetEpubVersion();
     if (version.startsWith('3')) {
-        NavProcessor navproc(m_Book->GetConstOPF()->GetNavResource());
-        navproc.GenerateNavTOCFromTOCEntries(ConvertTableToEntries());
-    } else {
-        // this is safe as all epub2's must hve an ncx (if not we made one for them)
-        m_Book->GetNCX()->GenerateNCXFromTOCEntries(m_Book.data(), ConvertTableToEntries());
+        HTMLResource * nav_resource = m_Book->GetConstOPF()->GetNavResource();
+        if (nav_resource) {
+            NavProcessor navproc(nav_resource);
+            navproc.GenerateNavTOCFromTOCEntries(toc_root);
+        }
+    }
+    // All epub2's must have an ncx (if not we made one for them), while on epub3 the
+    // ncx is optional but may be kept around for epub2 reader compatibility.
+    // Whenever it exists, keep it in sync with the same toc tree so it can not go stale.
+    NCXResource * ncx_resource = m_Book->GetNCX();
+    if (ncx_resource) {
+        ncx_resource->GenerateNCXFromTOCEntries(m_Book.data(), toc_root);
     }
 }
 
