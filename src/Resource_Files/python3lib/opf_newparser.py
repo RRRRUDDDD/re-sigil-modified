@@ -426,7 +426,7 @@ class Opf_Parser(object):
             else:
                 content= xmlencode(mcontent)
                 xmlres.append('>%s</%s>\n' % (content, mname))
-        xmlres.append(self.comments_to_xml('metadata', len(self.metadata), '    '))
+        xmlres.append(self.comments_to_xml('metadata', len(self.metadata), '    ', True))
         return "".join(xmlres)
 
     def convert_manifest_entries_to_xml(self):
@@ -440,7 +440,7 @@ class Opf_Parser(object):
                 val= xmlencode(val)
                 xmlres.append(' %s="%s"' % (key, val))
             xmlres.append('/>\n')
-        xmlres.append(self.comments_to_xml('manifest', len(self.manifest), '    '))
+        xmlres.append(self.comments_to_xml('manifest', len(self.manifest), '    ', True))
         return "".join(xmlres)
 
     def convert_spine_attr_to_xml(self):
@@ -466,7 +466,7 @@ class Opf_Parser(object):
                     val= xmlencode(val)
                     xmlres.append(' %s="%s"' % (key, val))
             xmlres.append('/>\n')
-        xmlres.append(self.comments_to_xml('spine', len(self.spine), '    '))
+        xmlres.append(self.comments_to_xml('spine', len(self.spine), '    ', True))
         return "".join(xmlres)
 
     def convert_guide_entries_to_xml(self):
@@ -475,7 +475,7 @@ class Opf_Parser(object):
             xmlres.append(self.comments_to_xml('guide', i, '    '))
             # all hrefs should already be in quoted (encoded) form
             xmlres.append('    <reference type="%s" title="%s" href="%s"/>\n' % (gtype, gtitle, ghref))
-        xmlres.append(self.comments_to_xml('guide', len(self.guide), '    '))
+        xmlres.append(self.comments_to_xml('guide', len(self.guide), '    ', True))
         return "".join(xmlres)
 
     def convert_binding_entries_to_xml(self):
@@ -483,7 +483,7 @@ class Opf_Parser(object):
         for i, (mtype, handler) in enumerate(self.bindings):
             xmlres.append(self.comments_to_xml('bindings', i, '    '))
             xmlres.append('  <mediaType media-type="%s" handler="%s"/>\n' % (mtype, handler))
-        xmlres.append(self.comments_to_xml('bindings', len(self.bindings), '    '))
+        xmlres.append(self.comments_to_xml('bindings', len(self.bindings), '    ', True))
         return "".join(xmlres)
 
     def has_comments(self, section):
@@ -492,10 +492,17 @@ class Opf_Parser(object):
                 return True
         return False
 
-    def comments_to_xml(self, section, index, indent):
+    # When at_end is set this collects everything from index onwards, not just
+    # the comments anchored exactly at it.  A section can shrink between the
+    # parse and the rebuild - removing a book resource drops manifest and spine
+    # entries, and the metadata editor rebuilds the metadata wholesale - which
+    # would otherwise leave comments anchored past the new end with no place to
+    # be written to.
+    def comments_to_xml(self, section, index, indent, at_end=False):
         xmlres=[]
         for (csection, cindex, ctext) in self.comments:
-            if csection == section and cindex == index:
+            anchored_here = cindex >= index if at_end else cindex == index
+            if csection == section and anchored_here:
                 xmlres.append(indent + ctext + '\n')
         return "".join(xmlres)
 

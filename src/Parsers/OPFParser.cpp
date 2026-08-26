@@ -569,11 +569,18 @@ bool OPFParser::has_comments(const QString &section) const
 }
 
 
-QString OPFParser::comments_to_xml(const QString &section, int index, const QString &indent) const
+// When at_end is set this collects everything from index onwards, not just the
+// comments anchored exactly at it.  A section can shrink between the parse and
+// the rebuild - removing a book resource drops manifest and spine entries, and
+// the metadata editor rebuilds the metadata wholesale - which would otherwise
+// leave comments anchored past the new end with no place to be written to.
+QString OPFParser::comments_to_xml(const QString &section, int index, const QString &indent,
+                                   bool at_end) const
 {
     QStringList xmlres;
     foreach (CommentEntry ce, m_comments) {
-        if ((ce.m_section == section) && (ce.m_index == index)) {
+        bool anchored_here = at_end ? (ce.m_index >= index) : (ce.m_index == index);
+        if ((ce.m_section == section) && anchored_here) {
             xmlres << ce.convert_to_xml(indent);
         }
     }
@@ -593,7 +600,7 @@ QString OPFParser::convert_to_xml() const
         xmlres << comments_to_xml("metadata", i, "    ");
         xmlres << m_metadata.at(i).convert_to_xml();
     }
-    xmlres << comments_to_xml("metadata", static_cast<int>(m_metadata.count()), "    ");
+    xmlres << comments_to_xml("metadata", static_cast<int>(m_metadata.count()), "    ", true);
     xmlres << "  </metadata>\n";
     xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_METADATA, "  ");
     xmlres << "  <manifest>\n";
@@ -601,7 +608,7 @@ QString OPFParser::convert_to_xml() const
         xmlres << comments_to_xml("manifest", i, "    ");
         xmlres << m_manifest.at(i).convert_to_xml();
     }
-    xmlres << comments_to_xml("manifest", static_cast<int>(m_manifest.count()), "    ");
+    xmlres << comments_to_xml("manifest", static_cast<int>(m_manifest.count()), "    ", true);
     xmlres << "  </manifest>\n";
     xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_MANIFEST, "  ");
     xmlres << m_spineattr.convert_to_xml();
@@ -609,7 +616,7 @@ QString OPFParser::convert_to_xml() const
         xmlres << comments_to_xml("spine", i, "    ");
         xmlres << m_spine.at(i).convert_to_xml();
     }
-    xmlres << comments_to_xml("spine", static_cast<int>(m_spine.count()), "    ");
+    xmlres << comments_to_xml("spine", static_cast<int>(m_spine.count()), "    ", true);
     xmlres << "  </spine>\n";
     xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_SPINE, "  ");
     if ((m_guide.size() > 0) || has_comments("guide")) {
@@ -618,7 +625,7 @@ QString OPFParser::convert_to_xml() const
             xmlres << comments_to_xml("guide", i, "    ");
             xmlres << m_guide.at(i).convert_to_xml();
         }
-        xmlres << comments_to_xml("guide", static_cast<int>(m_guide.count()), "    ");
+        xmlres << comments_to_xml("guide", static_cast<int>(m_guide.count()), "    ", true);
         xmlres << "  </guide>\n";
     }
     xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_GUIDE, "  ");
@@ -628,7 +635,7 @@ QString OPFParser::convert_to_xml() const
             xmlres << comments_to_xml("bindings", i, "    ");
             xmlres << m_bindings.at(i).convert_to_xml();
         }
-        xmlres << comments_to_xml("bindings", static_cast<int>(m_bindings.count()), "    ");
+        xmlres << comments_to_xml("bindings", static_cast<int>(m_bindings.count()), "    ", true);
         xmlres << "  </bindings>\n";
     }
     xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_BINDINGS, "  ");

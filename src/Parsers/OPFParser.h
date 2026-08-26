@@ -229,7 +229,8 @@ struct OPFParser
     bool has_comments(const QString &section) const;
 
 private:
-    QString comments_to_xml(const QString &section, int index, const QString &indent) const;
+    QString comments_to_xml(const QString &section, int index, const QString &indent,
+                            bool at_end = false) const;
 };
 
 #endif
