@@ -134,6 +134,45 @@ struct BindingsEntry
 };
 
 
+// Comments are not part of the opf data model but must survive the
+// parse / rebuild round trip.  Each comment is anchored to the spot it
+// was found in so it can be re-emitted in place.
+//
+//   m_section  "prolog"   - before the package tag,          m_index unused (0)
+//              "package"  - directly inside the package tag, m_index is the
+//                           OPF_PKGSTAGE_* value in effect when it was seen
+//              "metadata" | "manifest" | "spine" | "guide" | "bindings"
+//                         - inside that section, m_index is the number of
+//                           entries already parsed there, ie. the comment goes
+//                           in front of entry m_index (== size means section end)
+//              "epilog"   - after the closing package tag,   m_index unused (0)
+//
+// Keep this anchoring scheme, and the indenting used to write the comments back
+// out, identical to Opf_Parser in python3lib/opf_newparser.py.  The very same
+// opf travels back and forth between both implementations, so any mismatch
+// makes comments drift on every save.
+
+#define OPF_PKGSTAGE_BEFORE_METADATA  0
+#define OPF_PKGSTAGE_AFTER_METADATA   1
+#define OPF_PKGSTAGE_AFTER_MANIFEST   2
+#define OPF_PKGSTAGE_AFTER_SPINE      3
+#define OPF_PKGSTAGE_AFTER_GUIDE      4
+#define OPF_PKGSTAGE_AFTER_BINDINGS   5
+
+struct CommentEntry
+{
+    QString m_section;
+    int     m_index;
+    QString m_text;      // the complete comment, "<!--" ... "-->"
+
+    CommentEntry() : m_section("package"), m_index(0), m_text("") {};
+    CommentEntry(const QString&, int, const QString&);
+    CommentEntry(const CommentEntry& entry) : m_section(entry.m_section),
+          m_index(entry.m_index), m_text(entry.m_text) {};
+    QString convert_to_xml(const QString &indent) const;
+};
+
+
 class BaseParser
 {
 public:
@@ -178,6 +217,7 @@ struct OPFParser
     QList<SpineEntry>    m_spine;
     QList<GuideEntry>    m_guide;
     QList<BindingsEntry> m_bindings;
+    QList<CommentEntry>  m_comments;
     QHash<QString,int>   m_idpos;
     QHash<QString,int>   m_hrefpos;
 
@@ -185,6 +225,11 @@ struct OPFParser
     void parse(const QString & source);
 
     QString convert_to_xml() const;
+
+    bool has_comments(const QString &section) const;
+
+private:
+    QString comments_to_xml(const QString &section, int index, const QString &indent) const;
 };
 
 #endif

@@ -61,6 +61,38 @@ SPECIAL_HANDLING_TYPES = ['xmlheader', 'doctype', 'comment']
 
 _OPF_PARENT_TAGS = ['package', 'metadata', 'dc-metadata', 'x-metadata', 'manifest', 'spine', 'tours', 'guide', 'bindings']
 
+# Comments are not part of the opf data model but must survive the parse /
+# rebuild round trip.  Each one is remembered as (section, index, text):
+#
+#   'prolog'   - before the package tag,          index unused (0)
+#   'package'  - directly inside the package tag, index is the _PKGSTAGE_*
+#                value in effect when the comment was seen
+#   'metadata' | 'manifest' | 'spine' | 'guide' | 'bindings'
+#              - inside that section, index is the number of entries already
+#                parsed there, ie. the comment goes in front of entry index
+#                (index == len(section) means it sits at the section end)
+#   'epilog'   - after the closing package tag,   index unused (0)
+#
+# Keep this anchoring scheme, and the indenting used to write the comments back
+# out, identical to OPFParser in src/Parsers/OPFParser.cpp.  The very same opf
+# travels back and forth between both implementations, so any mismatch makes
+# comments drift on every save.
+
+_PKGSTAGE_BEFORE_METADATA = 0
+_PKGSTAGE_AFTER_METADATA = 1
+_PKGSTAGE_AFTER_MANIFEST = 2
+_PKGSTAGE_AFTER_SPINE = 3
+_PKGSTAGE_AFTER_GUIDE = 4
+_PKGSTAGE_AFTER_BINDINGS = 5
+
+_PKGSTAGE_FOR_END_TAG = {
+    'metadata': _PKGSTAGE_AFTER_METADATA,
+    'manifest': _PKGSTAGE_AFTER_MANIFEST,
+    'spine': _PKGSTAGE_AFTER_SPINE,
+    'guide': _PKGSTAGE_AFTER_GUIDE,
+    'bindings': _PKGSTAGE_AFTER_BINDINGS,
+    }
+
 class Opf_Parser(object):
 
     def __init__(self, opfdata):
@@ -74,7 +106,10 @@ class Opf_Parser(object):
         self.spine=[]
         self.guide=[]
         self.bindings=[]
+        self.comments=[]
         self.ns_remap = False
+        self._pkg_stage = _PKGSTAGE_BEFORE_METADATA
+        self._seen_package_end = False
         self._parseData()
 
 
@@ -90,6 +125,11 @@ class Opf_Parser(object):
                 tcontent = text.rstrip(" \r\n")
             else: # we have a tag
                 ttype, tname, tattr = self._parsetag(tag)
+                # comments are yielded as they are found and must not disturb
+                # the text content being collected for the enclosing tag
+                if ttype == 'comment':
+                    yield ".".join(prefix), '!--', tattr, None
+                    continue
                 # remap opf namespace on tags if needed
                 if tname.startswith('opf:'):
                     self.ns_remap = True
@@ -104,6 +144,13 @@ class Opf_Parser(object):
                 else: # single or end
                     if ttype == "end":
                         prefix.pop()
+                        # track which top level sections have already been
+                        # closed so package level comments can be put back
+                        # between the same pair of sections
+                        if tname in _PKGSTAGE_FOR_END_TAG:
+                            self._pkg_stage = max(self._pkg_stage, _PKGSTAGE_FOR_END_TAG[tname])
+                        elif tname == 'package':
+                            self._seen_package_end = True
                         tattr = last_tattr
                         if tattr is None:
                             tattr = OrderedDict()
@@ -114,10 +161,34 @@ class Opf_Parser(object):
                         yield ".".join(prefix), tname, tattr, tcontent
                     tcontent = None
 
+    # remember a comment along with where in the opf it was found
+    def _add_comment(self, prefix, special):
+        ctext = '<!--' + special + '-->'
+        if 'metadata' in prefix:
+            self.comments.append(('metadata', len(self.metadata), ctext))
+        elif 'manifest' in prefix:
+            self.comments.append(('manifest', len(self.manifest), ctext))
+        elif 'spine' in prefix:
+            self.comments.append(('spine', len(self.spine), ctext))
+        elif 'guide' in prefix:
+            self.comments.append(('guide', len(self.guide), ctext))
+        elif 'bindings' in prefix:
+            self.comments.append(('bindings', len(self.bindings), ctext))
+        elif 'package' in prefix:
+            self.comments.append(('package', self._pkg_stage, ctext))
+        elif self._seen_package_end:
+            self.comments.append(('epilog', 0, ctext))
+        else:
+            self.comments.append(('prolog', 0, ctext))
+
     # now parse the OPF to extract manifest, spine , and metadata
     def _parseData(self):
         cnt = 0
         for prefix, tname, tattr, tcontent in self._opf_tag_iter():
+            # comments
+            if tname == '!--':
+                self._add_comment(prefix, tattr.get('special', ''))
+                continue
             # package
             if tname == "package":
                 ver = tattr.pop("version", "2.0")
@@ -221,8 +292,9 @@ class Opf_Parser(object):
             p = b+3
             tname = '!--'
             ttype, backstep = SPECIAL_HANDLING_TAGS[tname]
-            tattr['special'] = s[p:backstep].strip()
-            return tname, ttype, tattr
+            # keep the comment body verbatim so it round trips unchanged
+            tattr['special'] = s[p:backstep]
+            return ttype, tname, tattr
         while p < n and s[p:p+1] not in ('>', '/', ' ', '"', "'","\r","\n") : p += 1
         tname=s[b:p].lower()
         # remove redundant opf: namespace prefixes on opf tags
@@ -342,7 +414,8 @@ class Opf_Parser(object):
 
     def convert_metadata_entries_to_xml(self):
         xmlres = []
-        for (mname, mcontent, attr) in self.metadata:
+        for i, (mname, mcontent, attr) in enumerate(self.metadata):
+            xmlres.append(self.comments_to_xml('metadata', i, '    '))
             xmlres.append('    <%s' % mname)
             for key in attr:
                 val= attr[key]
@@ -353,11 +426,13 @@ class Opf_Parser(object):
             else:
                 content= xmlencode(mcontent)
                 xmlres.append('>%s</%s>\n' % (content, mname))
+        xmlres.append(self.comments_to_xml('metadata', len(self.metadata), '    '))
         return "".join(xmlres)
 
     def convert_manifest_entries_to_xml(self):
         xmlres = []
-        for (id, href, mtype, attr) in self.manifest:
+        for i, (id, href, mtype, attr) in enumerate(self.manifest):
+            xmlres.append(self.comments_to_xml('manifest', i, '    '))
             # all hrefs should be kept in quoted (encoded) form
             xmlres.append('    <item id="%s" href="%s" media-type="%s"' % (id, href, mtype))
             for key in attr:
@@ -365,6 +440,7 @@ class Opf_Parser(object):
                 val= xmlencode(val)
                 xmlres.append(' %s="%s"' % (key, val))
             xmlres.append('/>\n')
+        xmlres.append(self.comments_to_xml('manifest', len(self.manifest), '    '))
         return "".join(xmlres)
 
     def convert_spine_attr_to_xml(self):
@@ -381,7 +457,8 @@ class Opf_Parser(object):
 
     def convert_spine_entries_to_xml(self):
         xmlres=[]
-        for (idref, attr) in self.spine:
+        for i, (idref, attr) in enumerate(self.spine):
+            xmlres.append(self.comments_to_xml('spine', i, '    '))
             xmlres.append('    <itemref idref="%s"' % idref)
             if attr is not None:
                 for key in attr:
@@ -389,44 +466,70 @@ class Opf_Parser(object):
                     val= xmlencode(val)
                     xmlres.append(' %s="%s"' % (key, val))
             xmlres.append('/>\n')
+        xmlres.append(self.comments_to_xml('spine', len(self.spine), '    '))
         return "".join(xmlres)
 
     def convert_guide_entries_to_xml(self):
         xmlres=[]
-        for (gtype, gtitle, ghref) in self.guide:
+        for i, (gtype, gtitle, ghref) in enumerate(self.guide):
+            xmlres.append(self.comments_to_xml('guide', i, '    '))
             # all hrefs should already be in quoted (encoded) form
             xmlres.append('    <reference type="%s" title="%s" href="%s"/>\n' % (gtype, gtitle, ghref))
+        xmlres.append(self.comments_to_xml('guide', len(self.guide), '    '))
         return "".join(xmlres)
 
     def convert_binding_entries_to_xml(self):
         xmlres=[]
-        for (mtype, handler) in self.bindings:
+        for i, (mtype, handler) in enumerate(self.bindings):
+            xmlres.append(self.comments_to_xml('bindings', i, '    '))
             xmlres.append('  <mediaType media-type="%s" handler="%s"/>\n' % (mtype, handler))
+        xmlres.append(self.comments_to_xml('bindings', len(self.bindings), '    '))
+        return "".join(xmlres)
+
+    def has_comments(self, section):
+        for (csection, cindex, ctext) in self.comments:
+            if csection == section:
+                return True
+        return False
+
+    def comments_to_xml(self, section, index, indent):
+        xmlres=[]
+        for (csection, cindex, ctext) in self.comments:
+            if csection == section and cindex == index:
+                xmlres.append(indent + ctext + '\n')
         return "".join(xmlres)
 
     def rebuild_opfxml(self):
         xmlres=[]
         xmlres.append('<?xml version="1.0" encoding="utf-8"?>\n')
+        xmlres.append(self.comments_to_xml('prolog', 0, ''))
         xmlres.append(self.convert_package_to_xml())
+        xmlres.append(self.comments_to_xml('package', _PKGSTAGE_BEFORE_METADATA, '  '))
         xmlres.append(self.convert_metadata_attr_to_xml())
         xmlres.append(self.convert_metadata_entries_to_xml())
         xmlres.append('  </metadata>\n')
+        xmlres.append(self.comments_to_xml('package', _PKGSTAGE_AFTER_METADATA, '  '))
         xmlres.append('  <manifest>\n')
         xmlres.append(self.convert_manifest_entries_to_xml())
         xmlres.append('  </manifest>\n')
+        xmlres.append(self.comments_to_xml('package', _PKGSTAGE_AFTER_MANIFEST, '  '))
         xmlres.append(self.convert_spine_attr_to_xml())
         xmlres.append(self.convert_spine_entries_to_xml())
         xmlres.append('  </spine>\n')
+        xmlres.append(self.comments_to_xml('package', _PKGSTAGE_AFTER_SPINE, '  '))
         (opfver, uid, attr) = self.package
-        if len(self.guide) > 0:
+        if len(self.guide) > 0 or self.has_comments('guide'):
             xmlres.append('  <guide>\n')
             xmlres.append(self.convert_guide_entries_to_xml())
             xmlres.append('  </guide>\n')
-        if len(self.bindings) > 0 and opfver.startswith('3'):
+        xmlres.append(self.comments_to_xml('package', _PKGSTAGE_AFTER_GUIDE, '  '))
+        if (len(self.bindings) > 0 or self.has_comments('bindings')) and opfver.startswith('3'):
             xmlres.append('  <bindings>\n')
             xmlres.append(self.convert_binding_entries_to_xml())
             xmlres.append('  </bindings>\n')
+        xmlres.append(self.comments_to_xml('package', _PKGSTAGE_AFTER_BINDINGS, '  '))
         xmlres.append('</package>\n')
+        xmlres.append(self.comments_to_xml('epilog', 0, ''))
         return "".join(xmlres)
 
 

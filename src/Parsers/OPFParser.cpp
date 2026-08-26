@@ -205,6 +205,21 @@ QString BindingsEntry::convert_to_xml() const
 }
 
 
+/**
+ * comments
+ */
+
+CommentEntry::CommentEntry(const QString& section, int index, const QString& text)
+: m_section(section), m_index(index), m_text(text)
+{
+}
+
+QString CommentEntry::convert_to_xml(const QString &indent) const
+{
+    return indent + m_text + "\n";
+}
+
+
 BaseParser::BaseParser(const QString &source)
     : m_source(source), m_pos(0), m_next(0), m_ns_remap(false)
 {
@@ -378,8 +393,11 @@ void OPFParser::parse(const QString& source)
     int count = 0;
     int manifest_position = 0;
     bool get_content = false;
+    int pkg_stage = OPF_PKGSTAGE_BEFORE_METADATA;
+    bool seen_package_end = false;
     m_idpos.clear();
     m_hrefpos.clear();
+    m_comments.clear();
     while(true) {
 
         BaseParser::MarkupInfo mi;
@@ -389,6 +407,50 @@ void OPFParser::parse(const QString& source)
 
         if (!mi.text.isEmpty()) {
             if (get_content) tcontent = mi.text.trimmed();
+            continue;
+        }
+
+        // Track which of the top level sections have already been closed, so a
+        // comment sitting directly inside the package tag can later be put back
+        // between the same pair of sections it was found between.
+        if (mi.ttype == "end") {
+            if (mi.tname == "metadata") {
+                pkg_stage = qMax(pkg_stage, OPF_PKGSTAGE_AFTER_METADATA);
+            } else if (mi.tname == "manifest") {
+                pkg_stage = qMax(pkg_stage, OPF_PKGSTAGE_AFTER_MANIFEST);
+            } else if (mi.tname == "spine") {
+                pkg_stage = qMax(pkg_stage, OPF_PKGSTAGE_AFTER_SPINE);
+            } else if (mi.tname == "guide") {
+                pkg_stage = qMax(pkg_stage, OPF_PKGSTAGE_AFTER_GUIDE);
+            } else if (mi.tname == "bindings") {
+                pkg_stage = qMax(pkg_stage, OPF_PKGSTAGE_AFTER_BINDINGS);
+            } else if (mi.tname == "package") {
+                seen_package_end = true;
+            }
+        }
+
+        // handle comments - they are not part of the opf data model but are
+        // remembered along with where they were found so they can be written
+        // back out in place instead of being silently thrown away
+        if (mi.ttype == "comment") {
+            QString ctext = "<!--" + mi.tattr.value("special", "") + "-->";
+            if (mi.tpath.contains("metadata")) {
+                m_comments << CommentEntry("metadata", static_cast<int>(m_metadata.count()), ctext);
+            } else if (mi.tpath.contains("manifest")) {
+                m_comments << CommentEntry("manifest", static_cast<int>(m_manifest.count()), ctext);
+            } else if (mi.tpath.contains("spine")) {
+                m_comments << CommentEntry("spine", static_cast<int>(m_spine.count()), ctext);
+            } else if (mi.tpath.contains("guide")) {
+                m_comments << CommentEntry("guide", static_cast<int>(m_guide.count()), ctext);
+            } else if (mi.tpath.contains("bindings")) {
+                m_comments << CommentEntry("bindings", static_cast<int>(m_bindings.count()), ctext);
+            } else if (mi.tpath.contains("package")) {
+                m_comments << CommentEntry("package", pkg_stage, ctext);
+            } else if (seen_package_end) {
+                m_comments << CommentEntry("epilog", 0, ctext);
+            } else {
+                m_comments << CommentEntry("prolog", 0, ctext);
+            }
             continue;
         }
 
@@ -498,40 +560,79 @@ void OPFParser::parse(const QString& source)
 }
 
 
+bool OPFParser::has_comments(const QString &section) const
+{
+    foreach (CommentEntry ce, m_comments) {
+        if (ce.m_section == section) return true;
+    }
+    return false;
+}
+
+
+QString OPFParser::comments_to_xml(const QString &section, int index, const QString &indent) const
+{
+    QStringList xmlres;
+    foreach (CommentEntry ce, m_comments) {
+        if ((ce.m_section == section) && (ce.m_index == index)) {
+            xmlres << ce.convert_to_xml(indent);
+        }
+    }
+    return xmlres.join("");
+}
+
+
 QString OPFParser::convert_to_xml() const
 {
     QStringList xmlres;
     xmlres <<  "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+    xmlres << comments_to_xml("prolog", 0, "");
     xmlres << m_package.convert_to_xml();
+    xmlres << comments_to_xml("package", OPF_PKGSTAGE_BEFORE_METADATA, "  ");
     xmlres << m_metans.convert_to_xml();
-    foreach (MetaEntry me, m_metadata) {
-        xmlres << me.convert_to_xml();
+    for (int i = 0; i < static_cast<int>(m_metadata.count()); i++) {
+        xmlres << comments_to_xml("metadata", i, "    ");
+        xmlres << m_metadata.at(i).convert_to_xml();
     }
+    xmlres << comments_to_xml("metadata", static_cast<int>(m_metadata.count()), "    ");
     xmlres << "  </metadata>\n";
+    xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_METADATA, "  ");
     xmlres << "  <manifest>\n";
-    foreach (ManifestEntry me, m_manifest) {
-        xmlres << me.convert_to_xml();
+    for (int i = 0; i < static_cast<int>(m_manifest.count()); i++) {
+        xmlres << comments_to_xml("manifest", i, "    ");
+        xmlres << m_manifest.at(i).convert_to_xml();
     }
+    xmlres << comments_to_xml("manifest", static_cast<int>(m_manifest.count()), "    ");
     xmlres << "  </manifest>\n";
+    xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_MANIFEST, "  ");
     xmlres << m_spineattr.convert_to_xml();
-    foreach(SpineEntry sp, m_spine) {
-        xmlres << sp.convert_to_xml();
+    for (int i = 0; i < static_cast<int>(m_spine.count()); i++) {
+        xmlres << comments_to_xml("spine", i, "    ");
+        xmlres << m_spine.at(i).convert_to_xml();
     }
+    xmlres << comments_to_xml("spine", static_cast<int>(m_spine.count()), "    ");
     xmlres << "  </spine>\n";
-    if (m_guide.size() > 0) {
+    xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_SPINE, "  ");
+    if ((m_guide.size() > 0) || has_comments("guide")) {
         xmlres << "  <guide>\n";
-        foreach(GuideEntry ge, m_guide) {
-            xmlres << ge.convert_to_xml();
+        for (int i = 0; i < static_cast<int>(m_guide.count()); i++) {
+            xmlres << comments_to_xml("guide", i, "    ");
+            xmlres << m_guide.at(i).convert_to_xml();
         }
+        xmlres << comments_to_xml("guide", static_cast<int>(m_guide.count()), "    ");
         xmlres << "  </guide>\n";
     }
-    if ((m_bindings.size() > 0) && (!m_package.m_version.startsWith("2"))) {
+    xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_GUIDE, "  ");
+    if (((m_bindings.size() > 0) || has_comments("bindings")) && (!m_package.m_version.startsWith("2"))) {
         xmlres << "  <bindings>\n";
-        foreach(BindingsEntry be, m_bindings) {
-            xmlres << be.convert_to_xml();
+        for (int i = 0; i < static_cast<int>(m_bindings.count()); i++) {
+            xmlres << comments_to_xml("bindings", i, "    ");
+            xmlres << m_bindings.at(i).convert_to_xml();
         }
+        xmlres << comments_to_xml("bindings", static_cast<int>(m_bindings.count()), "    ");
         xmlres << "  </bindings>\n";
     }
+    xmlres << comments_to_xml("package", OPF_PKGSTAGE_AFTER_BINDINGS, "  ");
     xmlres << "</package>\n";
+    xmlres << comments_to_xml("epilog", 0, "");
     return xmlres.join("");
 }
