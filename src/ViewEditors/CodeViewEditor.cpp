@@ -894,6 +894,28 @@ SPCRE::MatchInfo CodeViewEditor::GetMisspelledWord(const QString &text, int star
     return match_info;
 }
 
+// The last match in text that is not a zero width match sitting right at the
+// end of it.  Searching upwards from a zero width match would otherwise report
+// that same match again, because the search window still ends there.  The
+// window cannot simply be shortened instead: that would skip a non-empty match
+// which happens to end at the very same offset.
+static SPCRE::MatchInfo GetLastMatchBeforeWindowEnd(SPCRE *spcre, const QString &text)
+{
+    const QList<SPCRE::MatchInfo> matches = spcre->getEveryMatchInfo(text);
+
+    for (int i = matches.count() - 1; i >= 0; i--) {
+        const SPCRE::MatchInfo &candidate = matches.at(i);
+        const bool empty_at_window_end = candidate.offset.first == candidate.offset.second &&
+                                         candidate.offset.first == text.length();
+
+        if (!empty_at_window_end) {
+            return candidate;
+        }
+    }
+
+    return SPCRE::MatchInfo();
+}
+
 bool CodeViewEditor::FindNext(const QString &search_regex,
                               Searchable::Direction search_direction,
                               bool misspelled_words,
@@ -939,9 +961,22 @@ bool CodeViewEditor::FindNext(const QString &search_regex,
 
     int selection_offset = GetSelectionOffset(search_direction, ignore_selection_offset, marked_text);
 
+    // A zero width match ("^", "$", "\b", a lookaround) leaves an empty
+    // selection, so the next search starts at the very offset it was found at
+    // and would keep reporting it forever.  When that is what just happened,
+    // step past it instead of standing still.
+    const bool repeating_zero_width_match =
+        !ignore_selection_offset && !misspelled_words &&
+        search_regex == m_lastFindRegex &&
+        m_lastMatch.offset.first != -1 &&
+        m_lastMatch.offset.first == m_lastMatch.offset.second &&
+        m_lastMatch.offset.first == selection_offset;
+
     if (search_direction == Searchable::Direction_Up) {
         if (misspelled_words) {
             match_info = GetMisspelledWord(txt, 0, selection_offset, search_regex, search_direction);
+        } else if (repeating_zero_width_match) {
+            match_info = GetLastMatchBeforeWindowEnd(spcre, Utility::Substring(start, selection_offset, txt));
         } else {
             match_info = spcre->getLastMatchInfo(Utility::Substring(start, selection_offset, txt));
         }
@@ -949,7 +984,12 @@ bool CodeViewEditor::FindNext(const QString &search_regex,
         if (misspelled_words) {
             match_info = GetMisspelledWord(txt, selection_offset, txt.count(), search_regex, search_direction);
         } else {
-            match_info = spcre->getFirstMatchInfo(Utility::Substring(selection_offset, end, txt));
+            if (repeating_zero_width_match) {
+                selection_offset = Utility::NextCodePointOffset(txt, selection_offset);
+            }
+            if (selection_offset <= end) {
+                match_info = spcre->getFirstMatchInfo(Utility::Substring(selection_offset, end, txt));
+            }
         }
         start_offset = selection_offset;
     }

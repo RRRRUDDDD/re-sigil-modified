@@ -391,6 +391,21 @@ QStringRef Utility::SubstringRef(int start_index, int end_index, const QString &
 #endif
 }
 
+// Returns the offset one Unicode code point past offset, so that a UTF-16
+// surrogate pair is never split in half.
+int Utility::NextCodePointOffset(const QString &string, int offset)
+{
+    int next = offset + 1;
+
+    if (offset >= 0 && next < string.length() &&
+        string.at(offset).isHighSurrogate() &&
+        string.at(next).isLowSurrogate()) {
+        next += 1;
+    }
+
+    return next;
+}
+
 // Replace the first occurrence of string "before"
 // with string "after" in string "string"
 QString Utility::ReplaceFirst(const QString &before, const QString &after, const QString &string)

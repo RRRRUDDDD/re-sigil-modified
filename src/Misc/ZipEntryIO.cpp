@@ -221,7 +221,9 @@ ZipEntryIO::ExtractResult ZipEntryIO::ExtractCurrentEntry(
         result.status = Status::ReadFailed;
     }
 
-    // Final proof that everything we streamed is actually on disk.
+    // Catches a truncated or short-written output: the size the filesystem
+    // reports after close must match what we streamed.  This is not a
+    // durability guarantee -- nothing here forces an fsync.
     if (result.status == Status::Ok && QFileInfo(output_path).size() != written_bytes) {
         result.status = Status::WriteFailed;
     }

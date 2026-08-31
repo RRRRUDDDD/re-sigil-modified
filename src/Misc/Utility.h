@@ -101,6 +101,10 @@ public:
     // [ start_index, end_index >
     static QStringRef SubstringRef(int start_index, int end_index, const QString &string);
 
+    // Returns the offset one Unicode code point past offset, so that a UTF-16
+    // surrogate pair is never split in half.
+    static int NextCodePointOffset(const QString &string, int offset);
+
     // Replace the first occurrence of string "before"
     // with string "after" in string "string"
     static QString ReplaceFirst(const QString &before, const QString &after, const QString &string);
