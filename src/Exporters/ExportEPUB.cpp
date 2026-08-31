@@ -158,7 +158,12 @@ void ExportEPUB::SaveFolderAsEpubToLocation(const QString &fullfolderpath, const
         throw(CannotStoreFile("mimetype"));
     }
 
-    zipCloseFileInZip(zfile);
+    if (zipCloseFileInZip(zfile) != ZIP_OK) {
+        zipClose(zfile, NULL);
+        QFile::remove(tempFile);
+        throw(CannotStoreFile("mimetype"));
+    }
+
     // Write all the files in our directory path to the archive.
     QDirIterator it(fullfolderpath, QDir::Files | QDir::NoDotAndDotDot | QDir::Readable | QDir::Hidden, QDirIterator::Subdirectories);
 
@@ -250,7 +255,13 @@ void ExportEPUB::SaveFolderAsEpubToLocation(const QString &fullfolderpath, const
         }
     }
 
-    zipClose(zfile, NULL);
+    // This is where the central directory is written, so a failure here means
+    // the archive is incomplete no matter how well every entry went.
+    if (zipClose(zfile, NULL) != ZIP_OK) {
+        QFile::remove(tempFile);
+        throw(CannotStoreFile(tempFile.toStdString()));
+    }
+
     // Overwrite the contents of the real file with the contents from the temp
     // file we saved the data do. We do this instead of simply copying the file
     // because a file copy will lose extended attributes such as labels on OS X.
@@ -290,9 +301,17 @@ void ExportEPUB::SaveFolderAsEpubToLocation(const QString &fullfolderpath, const
         throw(CannotCopyFile(fullfilepath.toStdString()));
     }
 
+    // The per block check above compares against buffered writes, so a failure
+    // to get the buffer out to the disk would otherwise go unnoticed.
+    const bool flushed = real_epub.flush() && real_epub.error() == QFile::NoError;
+
     temp_epub.close();
     real_epub.close();
     QFile::remove(tempFile);
+
+    if (!flushed) {
+        throw(CannotCopyFile(fullfilepath.toStdString()));
+    }
 }
 
 
@@ -305,11 +324,23 @@ void ExportEPUB::CreateEncryptionXML(const QString &fullfolderpath)
         throw (CannotOpenFile(msg));
     }
 
-    EncryptionXmlWriter enc(m_Book.data(), file);
-    enc.WriteXML();
+    {
+        EncryptionXmlWriter enc(m_Book.data(), file);
+        enc.WriteXML();
+    }
     // Write to disk immediately
-    file.flush();
-    QFile::copy(file.fileName(), fullfolderpath + "/" + ENCRYPTION_XML_FILE_NAME);
+    if (!file.flush() || file.error() != QFile::NoError) {
+        throw (CannotWriteFile(file.fileName().toStdString()));
+    }
+
+    // CreatePublication() may already have copied an encryption.xml into
+    // META-INF, and QFile::copy() refuses to overwrite.  Ignoring that left a
+    // stale file describing different fonts, which makes them unreadable.
+    const QString destination = fullfolderpath + "/" + ENCRYPTION_XML_FILE_NAME;
+
+    if (!Utility::ForceCopyFile(file.fileName(), destination)) {
+        throw (CannotCopyFile(destination.toStdString()));
+    }
 }
 
 
