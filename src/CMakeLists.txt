@@ -333,6 +333,8 @@ set( MISC_FILES
     Misc/URLSchemeHandler.h
     Misc/Utility.cpp
     Misc/Utility.h
+    Misc/ZipEntryIO.cpp
+    Misc/ZipEntryIO.h
     Misc/ZipExtractionLimits.cpp
     Misc/ZipExtractionLimits.h
     Misc/SleepFunctions.h

@@ -65,9 +65,9 @@
 
 #include "sigil_constants.h"
 #include "sigil_exception.h"
-#include "Misc/QCodePage437Codec.h"
 #include "Misc/SettingsStore.h"
 #include "Misc/SleepFunctions.h"
+#include "Misc/ZipEntryIO.h"
 #include "MainUI/MainApplication.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -163,14 +163,8 @@ static const QString DARK_STYLE =
     "<style id=\"Sigil_Injected\">:root { background-color: %1; color: %2; } ::-webkit-scrollbar { display: none; }</style>"
     "<link rel=\"stylesheet\" type=\"text/css\" href=\"%3\" />";
 
-#ifndef MAX_PATH
-// Set Max length to 256 because that's the max path size on many systems.
-#define MAX_PATH 256
-#endif
 // This is the same read buffer size used by Java and Perl.
 #define BUFF_SIZE 8192
-
-static QCodePage437Codec *cp437 = 0;
 
 // Subclass QMessageBox for our StdWarningDialog to make any Details Resizable
 class SigilMessageBox: public QMessageBox
@@ -1058,9 +1052,6 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath,
 {
     int res = 0;
     QDir dir(destpath);
-    if (!cp437) {
-        cp437 = new QCodePage437Codec();
-    }
 #ifdef Q_OS_WIN32
     zlib_filefunc64_def ffunc;
     fill_win32_filefunc64W(&ffunc);
@@ -1087,86 +1078,51 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath,
     const QString staging_path = staging_dir.path();
     QDir staging_root(staging_path);
     ZipExtractionResourceLimiter limiter(limits);
-    bool current_file_open = false;
-
-    const auto close_archive = [&]() {
-        if (current_file_open) {
-            unzCloseCurrentFile(zfile);
-            current_file_open = false;
-        }
-        unzClose(zfile);
-    };
+    // Output paths already produced by an earlier entry.  A second entry
+    // claiming one of them would overwrite a file that has already been
+    // extracted, so it is rejected instead.
+    QSet<QString> reserved_paths;
 
     res = unzGoToFirstFile(zfile);
 
     if (res == UNZ_OK) {
         do {
             // Get the name of the file in the archive.
-            char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info = {};
-            if (unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH,
-                                        NULL, 0, NULL, 0) != UNZ_OK) {
-                close_archive();
+            ZipEntryInfo entry_info;
+            if (!ZipEntryIO::ReadCurrentEntry(zfile, &entry_info, NULL)) {
+                unzClose(zfile);
                 return false;
             }
-            QString qfile_name;
-            QString cp437_file_name;
-            qfile_name = QString::fromUtf8(file_name);
-            if (!(file_info.flag & (1<<11))) {
-                // General purpose bit 11 says the filename is utf-8 encoded. If not set then
-                // IBM 437 encoding might be used.
-                cp437_file_name = cp437->toUnicode(file_name);
-            }
+            QString qfile_name = entry_info.name;
+            QString cp437_file_name = entry_info.cp437_name;
 
-            const bool is_directory = file_info.uncompressed_size == 0 &&
-                                      qfile_name.endsWith('/');
+            const bool is_directory = entry_info.is_directory;
             const bool creates_alias = !is_directory &&
                                        !cp437_file_name.isEmpty() &&
                                        cp437_file_name != qfile_name;
             std::string limit_error;
-            if (!limiter.BeginEntry(static_cast<uint64_t>(file_info.compressed_size),
-                                    static_cast<uint64_t>(file_info.uncompressed_size),
+            if (!limiter.BeginEntry(entry_info.compressed_size,
+                                    entry_info.uncompressed_size,
                                     is_directory, creates_alias ? 2 : 1,
                                     &limit_error)) {
-                close_archive();
+                unzClose(zfile);
                 return false;
             }
 
             // If there is no file name then we can't do anything with it.
             if (!qfile_name.isEmpty()) {
 
-                // for security reasons against maliciously crafted zip archives
-                // we need the file path to always be inside the target folder 
-                // and not outside, so we will remove all illegal backslashes
-                // and all relative upward paths segments "/../" from the zip's local 
-                // file name/path before prepending the target folder to create 
-                // the final path
-
-                QString original_path = qfile_name;
-                bool evil_or_corrupt_epub = false;
-
-                if (qfile_name.contains("\\")) evil_or_corrupt_epub = true; 
-                qfile_name = "/" + qfile_name.replace("\\","");
-
-                if (qfile_name.contains("/../")) evil_or_corrupt_epub = true;
-                qfile_name = qfile_name.replace("/../","/");
-    
-                while(qfile_name.startsWith("/")) { 
-                    qfile_name = qfile_name.remove(0,1);
+                QString sanitized_name;
+                QString sanitized_alias;
+                bool evil_or_corrupt_epub = !ZipEntryIO::SanitizePath(qfile_name, &sanitized_name);
+                if (!ZipEntryIO::SanitizePath(cp437_file_name, &sanitized_alias)) {
+                    evil_or_corrupt_epub = true;
                 }
-                    
-                if (cp437_file_name.contains("\\")) evil_or_corrupt_epub = true; 
-                cp437_file_name = "/" + cp437_file_name.replace("\\","");
-
-                if (cp437_file_name.contains("/../")) evil_or_corrupt_epub = true;
-                cp437_file_name = cp437_file_name.replace("/../","/");
-    
-                while(cp437_file_name.startsWith("/")) { 
-                  cp437_file_name = cp437_file_name.remove(0,1);
-                }
+                qfile_name = sanitized_name;
+                cp437_file_name = sanitized_alias;
 
                 if (evil_or_corrupt_epub) {
-                    close_archive();
+                    unzClose(zfile);
                     // throw (UNZIPLoadParseError(QString(QObject::tr("Possible evil or corrupt zip file name: %1")).arg(original_path).toStdString()));
                     return false;
                 }
@@ -1182,55 +1138,22 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath,
                     staging_root.mkpath(qfile_name);
                     continue;
                 } else {
+                    if (!ZipEntryIO::ReserveOutputPath(&reserved_paths, qfile_name) ||
+                        (creates_alias &&
+                         !ZipEntryIO::ReserveOutputPath(&reserved_paths, cp437_file_name))) {
+                        unzClose(zfile);
+                        return false;
+                    }
                     if (!qfile_info.path().isEmpty()) staging_root.mkpath(qfile_info.path());
                 }
 
-                // Open the file entry in the archive for reading.
-                if (unzOpenCurrentFile(zfile) != UNZ_OK) {
-                    close_archive();
-                    return false;
-                }
-                current_file_open = true;
+                // Stream the entry to disk.  This owns the whole open/read/close
+                // cycle of the archive entry and verifies that every byte read
+                // actually reached the disk.
+                const ZipEntryIO::ExtractResult extracted =
+                    ZipEntryIO::ExtractCurrentEntry(zfile, file_path, &limiter);
 
-                // Open the file on disk to write the entry in the archive to.
-                QFile entry(file_path);
-
-                if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                    close_archive();
-                    return false;
-                }
-
-                // Buffered reading and writing.
-                char buff[BUFF_SIZE] = {0};
-                int read = 0;
-
-                while ((read = unzReadCurrentFile(zfile, buff, BUFF_SIZE)) > 0) {
-                    if (!limiter.AccountExtractedBytes(static_cast<uint64_t>(read),
-                                                       &limit_error)) {
-                        entry.close();
-                        entry.remove();
-                        close_archive();
-                        return false;
-                    }
-                    entry.write(buff, read);
-                }
-
-                entry.close();
-
-                // Read errors are marked by a negative read amount.
-                if (read < 0) {
-                    entry.remove();
-                    close_archive();
-                    return false;
-                }
-
-                // The file was read but the CRC did not match.
-                // We don't check the read file size vs the uncompressed file size
-                // because if they're different there should be a CRC error.
-                const int close_result = unzCloseCurrentFile(zfile);
-                current_file_open = false;
-                if (close_result == UNZ_CRCERROR) {
-                    entry.remove();
+                if (extracted.status != ZipEntryIO::Status::Ok) {
                     unzClose(zfile);
                     return false;
                 }
@@ -1238,19 +1161,26 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath,
                 if (creates_alias) {
                     if (!limiter.AccountAdditionalOutputBytes(limiter.CurrentEntryBytes(),
                                                               &limit_error)) {
-                        entry.remove();
                         unzClose(zfile);
                         return false;
                     }
                     QString cp437_file_path = staging_path + "/" + cp437_file_name;
-                    QFile::copy(file_path, cp437_file_path);
+                    // The two readings of the same bytes can differ in their
+                    // directory components, so the alias may need a path of
+                    // its own before it can be written.
+                    QFileInfo cp437_file_info(cp437_file_path);
+                    if (!cp437_file_info.path().isEmpty()) staging_root.mkpath(cp437_file_info.path());
+                    if (!QFile::copy(file_path, cp437_file_path)) {
+                        unzClose(zfile);
+                        return false;
+                    }
                 }
             }
         } while ((res = unzGoToNextFile(zfile)) == UNZ_OK);
     }
 
     if (res != UNZ_END_OF_LIST_OF_FILE) {
-        close_archive();
+        unzClose(zfile);
         return false;
     }
 
@@ -1270,9 +1200,6 @@ QStringList Utility::ZipInspect(const QString &zippath, bool *resource_limit_exc
         *resource_limit_exceeded = false;
     }
 
-    if (!cp437) {
-        cp437 = new QCodePage437Codec();
-    }
 #ifdef Q_OS_WIN32
     zlib_filefunc64_def ffunc;
     fill_win32_filefunc64W(&ffunc);
@@ -1292,29 +1219,22 @@ QStringList Utility::ZipInspect(const QString &zippath, bool *resource_limit_exc
     if (res == UNZ_OK) {
         do {
             // Get the name of the file in the archive.
-            char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info = {};
-            if (unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH,
-                                        NULL, 0, NULL, 0) != UNZ_OK) {
+            ZipEntryInfo entry_info;
+            if (!ZipEntryIO::ReadCurrentEntry(zfile, &entry_info, NULL)) {
                 filelist.clear();
                 unzClose(zfile);
                 return filelist;
             }
-            QString qfile_name;
-            QString cp437_file_name;
-            qfile_name = QString::fromUtf8(file_name);
-            if (!(file_info.flag & (1<<11))) {
-                cp437_file_name = cp437->toUnicode(file_name);
-            }
+            const QString qfile_name = entry_info.name;
+            const QString cp437_file_name = entry_info.cp437_name;
 
-            const bool is_directory = file_info.uncompressed_size == 0 &&
-                                      qfile_name.endsWith('/');
+            const bool is_directory = entry_info.is_directory;
             const bool creates_alias = !is_directory &&
                                        !cp437_file_name.isEmpty() &&
                                        cp437_file_name != qfile_name;
             std::string limit_error;
-            if (!limiter.BeginEntry(static_cast<uint64_t>(file_info.compressed_size),
-                                    static_cast<uint64_t>(file_info.uncompressed_size),
+            if (!limiter.BeginEntry(entry_info.compressed_size,
+                                    entry_info.uncompressed_size,
                                     is_directory, creates_alias ? 2 : 1,
                                     &limit_error)) {
                 if (resource_limit_exceeded) {
