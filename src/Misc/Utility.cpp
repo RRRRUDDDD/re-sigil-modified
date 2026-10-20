@@ -45,6 +45,7 @@
 #include <QProcess>
 #include <QRegExp>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QStringList>
 #include <QStringRef>
 #include <QTextStream>
@@ -57,6 +58,8 @@
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
 #include <QCollator>
+#include <QAction>
+#include <QKeySequence>
 #include <QMenu>
 #include <QSet>
 #include <QVector>
@@ -64,9 +67,9 @@
 
 #include "sigil_constants.h"
 #include "sigil_exception.h"
-#include "Misc/QCodePage437Codec.h"
 #include "Misc/SettingsStore.h"
 #include "Misc/SleepFunctions.h"
+#include "Misc/ZipEntryIO.h"
 #include "MainUI/MainApplication.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -79,18 +82,91 @@
 
 static const QString URL_SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-/~";
 
+namespace {
+
+Qt::CaseSensitivity FilePathCaseSensitivity()
+{
+#ifdef Q_OS_WIN32
+    return Qt::CaseInsensitive;
+#else
+    return Qt::CaseSensitive;
+#endif
+}
+
+
+QString NormalizedAbsolutePath(const QString &path)
+{
+    return QDir::cleanPath(QFileInfo(QDir::fromNativeSeparators(path)).absoluteFilePath());
+}
+
+
+bool PathIsWithinRoot(const QString &root_path, const QString &candidate_path)
+{
+    const QString root = QDir::cleanPath(QDir::fromNativeSeparators(root_path));
+    const QString candidate = QDir::cleanPath(QDir::fromNativeSeparators(candidate_path));
+    const Qt::CaseSensitivity sensitivity = FilePathCaseSensitivity();
+
+    if (candidate.compare(root, sensitivity) == 0) {
+        return true;
+    }
+
+    QString root_prefix(root);
+    if (!root_prefix.endsWith('/')) {
+        root_prefix.append('/');
+    }
+    return candidate.startsWith(root_prefix, sensitivity);
+}
+
+
+// Returns an empty string when no existing ancestor can be canonicalized.
+// For a missing final path, canonicalize its nearest existing ancestor and
+// append the missing segments so symlinked parent directories are still seen.
+QString CanonicalPathUsingExistingAncestor(const QString &absolute_path)
+{
+    const QString normalized = NormalizedAbsolutePath(absolute_path);
+    QFileInfo info(normalized);
+    const QString direct_canonical = info.canonicalFilePath();
+    if (!direct_canonical.isEmpty()) {
+        return QDir::cleanPath(QDir::fromNativeSeparators(direct_canonical));
+    }
+
+    QString current = normalized;
+    QStringList missing_segments;
+    while (!current.isEmpty()) {
+        QFileInfo current_info(current);
+        if (current_info.exists()) {
+            const QString ancestor_canonical = current_info.canonicalFilePath();
+            if (ancestor_canonical.isEmpty()) {
+                return QString();
+            }
+
+            QString result = QDir::cleanPath(QDir::fromNativeSeparators(ancestor_canonical));
+            foreach(const QString &segment, missing_segments) {
+                result = QDir::cleanPath(result + "/" + segment);
+            }
+            return result;
+        }
+
+        const QString segment = current_info.fileName();
+        const QString parent = QDir::cleanPath(current_info.absolutePath());
+        if (segment.isEmpty() || parent == current) {
+            break;
+        }
+        missing_segments.prepend(segment);
+        current = parent;
+    }
+
+    return QString();
+}
+
+}
+
 static const QString DARK_STYLE =
     "<style id=\"Sigil_Injected\">:root { background-color: %1; color: %2; } ::-webkit-scrollbar { display: none; }</style>"
     "<link rel=\"stylesheet\" type=\"text/css\" href=\"%3\" />";
 
-#ifndef MAX_PATH
-// Set Max length to 256 because that's the max path size on many systems.
-#define MAX_PATH 256
-#endif
 // This is the same read buffer size used by Java and Perl.
 #define BUFF_SIZE 8192
-
-static QCodePage437Codec *cp437 = 0;
 
 // Subclass QMessageBox for our StdWarningDialog to make any Details Resizable
 class SigilMessageBox: public QMessageBox
@@ -267,6 +343,72 @@ QString Utility::ChangeCase(const QString &text, const Utility::Casing &casing)
 }
 
 
+void Utility::LocalizeStandardTextActions(QMenu *menu)
+{
+    if (!menu) {
+        return;
+    }
+
+    const QKeySequence undo_key(QKeySequence::Undo);
+    const QKeySequence redo_key(QKeySequence::Redo);
+    const QKeySequence cut_key(QKeySequence::Cut);
+    const QKeySequence copy_key(QKeySequence::Copy);
+    const QKeySequence paste_key(QKeySequence::Paste);
+    const QKeySequence delete_key(QKeySequence::Delete);
+    const QKeySequence select_all_key(QKeySequence::SelectAll);
+
+    for (QAction *action : menu->actions()) {
+        if (!action || action->isSeparator()) {
+            continue;
+        }
+
+        const QKeySequence shortcut = action->shortcut();
+        QString text = action->text();
+        const int tab = text.indexOf(QLatin1Char('\t'));
+        if (tab >= 0) {
+            text.truncate(tab);
+        }
+        text.remove('&');
+        const int paren = text.indexOf('(');
+        if (paren > 0) {
+            text = text.left(paren);
+        }
+        const int ellipsis = text.indexOf(QChar(0x2026));
+        if (ellipsis > 0) {
+            text = text.left(ellipsis);
+        }
+        while (text.endsWith(QLatin1Char('.'))) {
+            text.chop(1);
+        }
+        text = text.trimmed();
+
+        if (shortcut == undo_key || text.compare(QStringLiteral("Undo"), Qt::CaseInsensitive) == 0 ||
+            text == QStringLiteral("撤销")) {
+            action->setText(QCoreApplication::translate("StandardTextActions", "&Undo"));
+        } else if (shortcut == redo_key || text.compare(QStringLiteral("Redo"), Qt::CaseInsensitive) == 0 ||
+                   text == QStringLiteral("重做")) {
+            action->setText(QCoreApplication::translate("StandardTextActions", "&Redo"));
+        } else if (shortcut == cut_key || text.compare(QStringLiteral("Cut"), Qt::CaseInsensitive) == 0 ||
+                   text == QStringLiteral("剪切")) {
+            action->setText(QCoreApplication::translate("StandardTextActions", "Cu&t"));
+        } else if (shortcut == copy_key || text.compare(QStringLiteral("Copy"), Qt::CaseInsensitive) == 0 ||
+                   text == QStringLiteral("复制")) {
+            action->setText(QCoreApplication::translate("StandardTextActions", "&Copy"));
+        } else if (shortcut == paste_key || text.compare(QStringLiteral("Paste"), Qt::CaseInsensitive) == 0 ||
+                   text == QStringLiteral("粘贴")) {
+            action->setText(QCoreApplication::translate("StandardTextActions", "&Paste"));
+        } else if (shortcut == delete_key || text.compare(QStringLiteral("Delete"), Qt::CaseInsensitive) == 0 ||
+                   text == QStringLiteral("删除")) {
+            action->setText(QCoreApplication::translate("StandardTextActions", "&Delete"));
+        } else if (shortcut == select_all_key ||
+                   text.compare(QStringLiteral("Select All"), Qt::CaseInsensitive) == 0 ||
+                   text == QStringLiteral("选择所有") || text == QStringLiteral("全选")) {
+            action->setText(QCoreApplication::translate("StandardTextActions", "Select All"));
+        }
+    }
+}
+
+
 // Returns true if the string is mixed case, false otherwise.
 // For instance, "test" and "TEST" return false, "teSt" returns true.
 // If the string is empty, returns false.
@@ -315,6 +457,21 @@ QStringRef Utility::SubstringRef(int start_index, int end_index, const QString &
 #else
     return QStringRef(&string, start_index, end_index - start_index);
 #endif
+}
+
+// Returns the offset one Unicode code point past offset, so that a UTF-16
+// surrogate pair is never split in half.
+int Utility::NextCodePointOffset(const QString &string, int offset)
+{
+    int next = offset + 1;
+
+    if (offset >= 0 && next < string.length() &&
+        string.at(offset).isHighSurrogate() &&
+        string.at(next).isLowSurrogate()) {
+        next += 1;
+    }
+
+    return next;
 }
 
 // Replace the first occurrence of string "before"
@@ -702,6 +859,99 @@ QString Utility::URLDecodePath(const QString &path)
 }
 
 
+bool Utility::ResolvePathWithinRoot(const QString &root_path,
+                                    const QString &base_path,
+                                    const QString &path,
+                                    QString *resolved_path,
+                                    QString *error_message,
+                                    bool path_is_absolute)
+{
+    if (resolved_path) {
+        resolved_path->clear();
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+
+    const auto fail = [error_message](const QString &message) {
+        if (error_message) {
+            *error_message = message;
+        }
+        return false;
+    };
+
+    if (root_path.isEmpty()) {
+        return fail(tr("the allowed root directory is empty"));
+    }
+    if (base_path.isEmpty()) {
+        return fail(tr("the base directory is empty"));
+    }
+    if (path.isEmpty()) {
+        return fail(tr("the path is empty"));
+    }
+
+    const QString root = NormalizedAbsolutePath(root_path);
+    const QString base = NormalizedAbsolutePath(base_path);
+    if (!PathIsWithinRoot(root, base)) {
+        return fail(tr("the base directory is outside the allowed root"));
+    }
+
+    QString candidate;
+    if (path_is_absolute) {
+        const QString normalized_input = QDir::fromNativeSeparators(path);
+        if (!QFileInfo(normalized_input).isAbsolute()) {
+            return fail(tr("the path is not absolute"));
+        }
+        candidate = NormalizedAbsolutePath(normalized_input);
+    } else {
+        const QString decoded_path = URLDecodePath(path);
+        if (decoded_path.isEmpty()) {
+            return fail(tr("the decoded path is empty"));
+        }
+        if (decoded_path.contains(QChar(QChar::Null))) {
+            return fail(tr("the path contains a null character"));
+        }
+        if (decoded_path.contains('\\')) {
+            return fail(tr("backslash path separators are not valid in an EPUB path"));
+        }
+        if (QDir::isAbsolutePath(decoded_path) || decoded_path.startsWith('/') ||
+            QRegularExpression("^[A-Za-z][A-Za-z0-9+.-]*:").match(decoded_path).hasMatch()) {
+            return fail(tr("absolute, drive-letter, UNC, and scheme paths are not allowed"));
+        }
+        candidate = QDir::cleanPath(base + "/" + decoded_path);
+    }
+
+    if (!PathIsWithinRoot(root, candidate)) {
+        return fail(tr("the normalized path escapes the allowed root"));
+    }
+
+    const QString canonical_root = CanonicalPathUsingExistingAncestor(root);
+    const QString canonical_base = CanonicalPathUsingExistingAncestor(base);
+    const QString canonical_candidate = CanonicalPathUsingExistingAncestor(candidate);
+
+    if (canonical_root.isEmpty()) {
+        return fail(tr("the allowed root directory could not be canonicalized"));
+    }
+    if (canonical_base.isEmpty()) {
+        return fail(tr("the base directory could not be canonicalized"));
+    }
+    if (canonical_candidate.isEmpty()) {
+        return fail(tr("the path or its nearest existing parent could not be canonicalized"));
+    }
+    if (!PathIsWithinRoot(canonical_root, canonical_base)) {
+        return fail(tr("the canonical base directory is outside the allowed root"));
+    }
+    if (!PathIsWithinRoot(canonical_root, canonical_candidate)) {
+        return fail(tr("the canonical path escapes the allowed root through a filesystem link"));
+    }
+
+    if (resolved_path) {
+        *resolved_path = candidate;
+    }
+    return true;
+}
+
+
 void Utility::DisplayExceptionErrorDialog(const QString &error_info)
 {
     QMessageBox message_box(QApplication::activeWindow());
@@ -842,13 +1092,49 @@ QString Utility::stdWStringToQString(const std::wstring &str)
 #endif
 
 
+namespace {
+
+bool CommitExtractedFiles(const QString &source_path, const QString &destination_path)
+{
+    QDir source(source_path);
+    QDir destination(destination_path);
+    source.setFilter(QDir::AllDirs |
+                     QDir::Files |
+                     QDir::NoDotAndDotDot |
+                     QDir::NoSymLinks |
+                     QDir::Hidden);
+
+    foreach (const QFileInfo &item, source.entryInfoList()) {
+        const QString destination_item = destination.filePath(item.fileName());
+        if (item.isFile()) {
+            // Plugin updates historically replace files in an existing plugin
+            // directory.  This runs only after the entire ZIP passed limits.
+            if (!Utility::ForceCopyFile(item.absoluteFilePath(), destination_item)) {
+                return false;
+            }
+        } else {
+            if (!destination.mkpath(item.fileName()) ||
+                !CommitExtractedFiles(item.absoluteFilePath(), destination_item)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+}
+
+
 bool Utility::UnZip(const QString &zippath, const QString &destpath)
+{
+    return UnZip(zippath, destpath, ZipExtractionLimits::Default());
+}
+
+bool Utility::UnZip(const QString &zippath, const QString &destpath,
+                    const ZipExtractionLimits &limits)
 {
     int res = 0;
     QDir dir(destpath);
-    if (!cp437) {
-        cp437 = new QCodePage437Codec();
-    }
 #ifdef Q_OS_WIN32
     zlib_filefunc64_def ffunc;
     fill_win32_filefunc64W(&ffunc);
@@ -858,61 +1144,67 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
 #endif
 
     if ((zfile == NULL) || (!IsFileReadable(zippath)) || (!dir.exists())) {
+        if (zfile != NULL) {
+            unzClose(zfile);
+        }
         return false;
     }
+
+    // Extract into an isolated child first.  A rejected/corrupt ZIP therefore
+    // cannot leave partial files in, overwrite, or cause cleanup of an existing
+    // plugin directory.  QTemporaryDir removes only this invocation's files.
+    QTemporaryDir staging_dir(dir.filePath(".sigil-unzip-XXXXXX"));
+    if (!staging_dir.isValid()) {
+        unzClose(zfile);
+        return false;
+    }
+    const QString staging_path = staging_dir.path();
+    QDir staging_root(staging_path);
+    ZipExtractionResourceLimiter limiter(limits);
+    // Output paths already produced by an earlier entry.  A second entry
+    // claiming one of them would overwrite a file that has already been
+    // extracted, so it is rejected instead.
+    QSet<QString> reserved_paths;
 
     res = unzGoToFirstFile(zfile);
 
     if (res == UNZ_OK) {
         do {
             // Get the name of the file in the archive.
-            char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info;
-            unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH, NULL, 0, NULL, 0);
-            QString qfile_name;
-            QString cp437_file_name;
-            qfile_name = QString::fromUtf8(file_name);
-            if (!(file_info.flag & (1<<11))) {
-                // General purpose bit 11 says the filename is utf-8 encoded. If not set then
-                // IBM 437 encoding might be used.
-                cp437_file_name = cp437->toUnicode(file_name);
+            ZipEntryInfo entry_info;
+            if (!ZipEntryIO::ReadCurrentEntry(zfile, &entry_info, NULL)) {
+                unzClose(zfile);
+                return false;
+            }
+            QString qfile_name = entry_info.name;
+            QString cp437_file_name = entry_info.cp437_name;
+
+            const bool is_directory = entry_info.is_directory;
+            const bool creates_alias = !is_directory &&
+                                       !cp437_file_name.isEmpty() &&
+                                       cp437_file_name != qfile_name;
+            std::string limit_error;
+            if (!limiter.BeginEntry(entry_info.compressed_size,
+                                    entry_info.uncompressed_size,
+                                    is_directory, creates_alias ? 2 : 1,
+                                    &limit_error)) {
+                unzClose(zfile);
+                return false;
             }
 
             // If there is no file name then we can't do anything with it.
             if (!qfile_name.isEmpty()) {
 
-                // for security reasons against maliciously crafted zip archives
-                // we need the file path to always be inside the target folder 
-                // and not outside, so we will remove all illegal backslashes
-                // and all relative upward paths segments "/../" from the zip's local 
-                // file name/path before prepending the target folder to create 
-                // the final path
-
-                QString original_path = qfile_name;
-                bool evil_or_corrupt_epub = false;
-
-                if (qfile_name.contains("\\")) evil_or_corrupt_epub = true; 
-                qfile_name = "/" + qfile_name.replace("\\","");
-
-                if (qfile_name.contains("/../")) evil_or_corrupt_epub = true;
-                qfile_name = qfile_name.replace("/../","/");
-    
-                while(qfile_name.startsWith("/")) { 
-                    qfile_name = qfile_name.remove(0,1);
+                QString sanitized_name;
+                QString sanitized_alias;
+                bool evil_or_corrupt_epub = !ZipEntryIO::SanitizePath(qfile_name, &sanitized_name);
+                if (!ZipEntryIO::SanitizePath(cp437_file_name, &sanitized_alias)) {
+                    evil_or_corrupt_epub = true;
                 }
-                    
-                if (cp437_file_name.contains("\\")) evil_or_corrupt_epub = true; 
-                cp437_file_name = "/" + cp437_file_name.replace("\\","");
-
-                if (cp437_file_name.contains("/../")) evil_or_corrupt_epub = true;
-                cp437_file_name = cp437_file_name.replace("/../","/");
-    
-                while(cp437_file_name.startsWith("/")) { 
-                  cp437_file_name = cp437_file_name.remove(0,1);
-                }
+                qfile_name = sanitized_name;
+                cp437_file_name = sanitized_alias;
 
                 if (evil_or_corrupt_epub) {
-                    unzCloseCurrentFile(zfile);
                     unzClose(zfile);
                     // throw (UNZIPLoadParseError(QString(QObject::tr("Possible evil or corrupt zip file name: %1")).arg(original_path).toStdString()));
                     return false;
@@ -921,60 +1213,50 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
                 // We use the dir object to create the path in the temporary directory.
                 // Unfortunately, we need a dir ojbect to do this as it's not a static function.
                 // Full file path in the temporary directory.
-                QString file_path = destpath + "/" + qfile_name;
+                QString file_path = staging_path + "/" + qfile_name;
                 QFileInfo qfile_info(file_path);
 
                 // Is this entry a directory?
-                if (file_info.uncompressed_size == 0 && qfile_name.endsWith('/')) {
-                    dir.mkpath(qfile_name);
+                if (is_directory) {
+                    staging_root.mkpath(qfile_name);
                     continue;
                 } else {
-                    if (!qfile_info.path().isEmpty()) dir.mkpath(qfile_info.path());
+                    if (!ZipEntryIO::ReserveOutputPath(&reserved_paths, qfile_name) ||
+                        (creates_alias &&
+                         !ZipEntryIO::ReserveOutputPath(&reserved_paths, cp437_file_name))) {
+                        unzClose(zfile);
+                        return false;
+                    }
+                    if (!qfile_info.path().isEmpty()) staging_root.mkpath(qfile_info.path());
                 }
 
-                // Open the file entry in the archive for reading.
-                if (unzOpenCurrentFile(zfile) != UNZ_OK) {
+                // Stream the entry to disk.  This owns the whole open/read/close
+                // cycle of the archive entry and verifies that every byte read
+                // actually reached the disk.
+                const ZipEntryIO::ExtractResult extracted =
+                    ZipEntryIO::ExtractCurrentEntry(zfile, file_path, &limiter);
+
+                if (extracted.status != ZipEntryIO::Status::Ok) {
                     unzClose(zfile);
                     return false;
                 }
 
-                // Open the file on disk to write the entry in the archive to.
-                QFile entry(file_path);
-
-                if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
-                    return false;
-                }
-
-                // Buffered reading and writing.
-                char buff[BUFF_SIZE] = {0};
-                int read = 0;
-
-                while ((read = unzReadCurrentFile(zfile, buff, BUFF_SIZE)) > 0) {
-                    entry.write(buff, read);
-                }
-
-                entry.close();
-
-                // Read errors are marked by a negative read amount.
-                if (read < 0) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
-                    return false;
-                }
-
-                // The file was read but the CRC did not match.
-                // We don't check the read file size vs the uncompressed file size
-                // because if they're different there should be a CRC error.
-                if (unzCloseCurrentFile(zfile) == UNZ_CRCERROR) {
-                    unzClose(zfile);
-                    return false;
-                }
-
-                if (!cp437_file_name.isEmpty() && cp437_file_name != qfile_name) {
-                    QString cp437_file_path = destpath + "/" + cp437_file_name;
-                    QFile::copy(file_path, cp437_file_path);
+                if (creates_alias) {
+                    if (!limiter.AccountAdditionalOutputBytes(limiter.CurrentEntryBytes(),
+                                                              &limit_error)) {
+                        unzClose(zfile);
+                        return false;
+                    }
+                    QString cp437_file_path = staging_path + "/" + cp437_file_name;
+                    // The two readings of the same bytes can differ in their
+                    // directory components, so the alias may need a path of
+                    // its own before it can be written.
+                    QFileInfo cp437_file_info(cp437_file_path);
+                    if (!cp437_file_info.path().isEmpty()) staging_root.mkpath(cp437_file_info.path());
+                    if (!QFile::copy(file_path, cp437_file_path)) {
+                        unzClose(zfile);
+                        return false;
+                    }
                 }
             }
         } while ((res = unzGoToNextFile(zfile)) == UNZ_OK);
@@ -986,17 +1268,21 @@ bool Utility::UnZip(const QString &zippath, const QString &destpath)
     }
 
     unzClose(zfile);
+
+    if (!CommitExtractedFiles(staging_path, destpath)) {
+        return false;
+    }
     return true;
 }
 
-QStringList Utility::ZipInspect(const QString &zippath)
+QStringList Utility::ZipInspect(const QString &zippath, bool *resource_limit_exceeded)
 {
     QStringList filelist;
     int res = 0;
-
-    if (!cp437) {
-        cp437 = new QCodePage437Codec();
+    if (resource_limit_exceeded) {
+        *resource_limit_exceeded = false;
     }
+
 #ifdef Q_OS_WIN32
     zlib_filefunc64_def ffunc;
     fill_win32_filefunc64W(&ffunc);
@@ -1006,20 +1292,40 @@ QStringList Utility::ZipInspect(const QString &zippath)
 #endif
 
     if ((zfile == NULL) || (!IsFileReadable(zippath))) {
+        if (zfile != NULL) {
+            unzClose(zfile);
+        }
         return filelist;
     }
+    ZipExtractionResourceLimiter limiter(ZipExtractionLimits::Default());
     res = unzGoToFirstFile(zfile);
     if (res == UNZ_OK) {
         do {
             // Get the name of the file in the archive.
-            char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info;
-            unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH, NULL, 0, NULL, 0);
-            QString qfile_name;
-            QString cp437_file_name;
-            qfile_name = QString::fromUtf8(file_name);
-            if (!(file_info.flag & (1<<11))) {
-                cp437_file_name = cp437->toUnicode(file_name);
+            ZipEntryInfo entry_info;
+            if (!ZipEntryIO::ReadCurrentEntry(zfile, &entry_info, NULL)) {
+                filelist.clear();
+                unzClose(zfile);
+                return filelist;
+            }
+            const QString qfile_name = entry_info.name;
+            const QString cp437_file_name = entry_info.cp437_name;
+
+            const bool is_directory = entry_info.is_directory;
+            const bool creates_alias = !is_directory &&
+                                       !cp437_file_name.isEmpty() &&
+                                       cp437_file_name != qfile_name;
+            std::string limit_error;
+            if (!limiter.BeginEntry(entry_info.compressed_size,
+                                    entry_info.uncompressed_size,
+                                    is_directory, creates_alias ? 2 : 1,
+                                    &limit_error)) {
+                if (resource_limit_exceeded) {
+                    *resource_limit_exceeded = true;
+                }
+                filelist.clear();
+                unzClose(zfile);
+                return filelist;
             }
 
             // If there is no file name then we can't do anything with it.

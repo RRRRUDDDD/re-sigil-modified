@@ -385,6 +385,10 @@ private:
     QAction* m_AutoTokeniseCheckAction;
     QMenu*   m_menu;
     bool m_CF_RestartFlag;  //修改：循环查找BUG
+
+    // Guards user-triggered search entry points against re-entry while a
+    // cross-file search is spinning a nested event loop (OpenResourceAndWait...).
+    bool m_UiSearchRunning;
 };
 
 

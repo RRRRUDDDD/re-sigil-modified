@@ -406,7 +406,8 @@ void TextView::mouseReleaseEvent(QMouseEvent *event)
 void TextView::contextMenuEvent(QContextMenuEvent *event)
 {
     QPointer<QMenu> menu = createStandardContextMenu();
-    
+    Utility::LocalizeStandardTextActions(menu);
+
     menu->exec(event->globalPos());
     if (!menu.isNull()) {
         delete menu.data();

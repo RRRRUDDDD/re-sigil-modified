@@ -876,6 +876,37 @@ if a sans-serif font-family specified in your CSS</source>
 <context>
     <name>BookBrowser</name>
     <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="99"/>
+        <location filename="../../MainUI/BookBrowser.cpp" line="322"/>
+        <source>Move in Reading Order</source>
+        <translation>調整閱讀順序</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="319"/>
+        <source>Select the HTML file to move the selected file(s) after:</source>
+        <translation>請選擇要將所選檔案移至其後的 HTML 檔案：</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="320"/>
+        <source>Select the HTML file to move the selected file(s) before:</source>
+        <translation>請選擇要將所選檔案移至其前的 HTML 檔案：</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="375"/>
+        <source>Selected HTML file(s) moved in the reading order.</source>
+        <translation>已在閱讀順序中移動所選 HTML 檔案。</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1987"/>
+        <source>Move Before HTML File...</source>
+        <translation>移至指定 HTML 檔案之前...</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1988"/>
+        <source>Move After HTML File...</source>
+        <translation>移至指定 HTML 檔案之後...</translation>
+    </message>
+    <message>
         <location filename="../../MainUI/BookBrowser.cpp" line="82"/>
         <source>Book Browser</source>
         <translation>書本瀏覽器</translation>

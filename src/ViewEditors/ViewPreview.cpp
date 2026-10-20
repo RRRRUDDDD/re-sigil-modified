@@ -23,6 +23,7 @@
 #include <QEvent>
 #include <QEventLoop>
 #include <QDeadlineTimer>
+#include <QDateTime>
 #include <QTimer>
 #include <QSize>
 #include <QUrl>
@@ -36,6 +37,11 @@
 #include <QWebEngineScript>
 #include <QApplication>
 #include <QGuiApplication>
+#include <QAction>
+#include <QClipboard>
+#include <QContextMenuEvent>
+#include <QMenu>
+#include <QPointer>
 #include <QDebug>
 
 #include "MainUI/MainApplication.h"
@@ -67,6 +73,239 @@ const QString SET_CURSOR_JS2 =
 const QString SET_PREVIEW_COLORS =
     "document.body.style.backgroundColor=\"%1\"; "
     "document.body.style.color=\"%2\";";
+
+// Chromium's own copy serialization inserts extra newlines around block
+// elements. Build the text from leaf blocks instead so explicit empty
+// blocks map to exactly one empty line and <ruby> keeps its annotation.
+// The preview is served as application/xhtml+xml, so tagName/localName are
+// lower case in the XML DOM. Always normalize through tag().
+static const char COPY_SELECTION_JS[] = R"JS(
+(function() {
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+    return { ok: false, reason: 'no-selection' };
+  }
+  var range = sel.getRangeAt(0);
+  var frag = range.cloneContents();
+
+  var BLOCKS = {
+    ADDRESS: 1, ARTICLE: 1, ASIDE: 1, BLOCKQUOTE: 1, BODY: 1, DD: 1,
+    DETAILS: 1, DIV: 1, DL: 1, DT: 1, FIELDSET: 1, FIGCAPTION: 1,
+    FIGURE: 1, FOOTER: 1, FORM: 1, H1: 1, H2: 1, H3: 1, H4: 1,
+    H5: 1, H6: 1, HEADER: 1, HTML: 1, LI: 1, MAIN: 1, NAV: 1,
+    OL: 1, P: 1, PRE: 1, SECTION: 1, SUMMARY: 1, TABLE: 1,
+    TBODY: 1, TFOOT: 1, THEAD: 1, TR: 1, UL: 1
+  };
+  var SKIP = {
+    SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, HEAD: 1, TEMPLATE: 1,
+    IFRAME: 1, OBJECT: 1, EMBED: 1, CANVAS: 1, VIDEO: 1, AUDIO: 1
+  };
+
+  function tag(el) {
+    return (el.localName || el.tagName || '').toUpperCase();
+  }
+  function isHidden(el) {
+    if (el.hasAttribute && el.hasAttribute('hidden')) return true;
+    var style = el.getAttribute ? (el.getAttribute('style') || '') : '';
+    return /display\s*:\s*none|visibility\s*:\s*hidden/i.test(style);
+  }
+  function nearestPre(node) {
+    for (var n = node; n; n = n.parentNode) {
+      if (n.nodeType === 1 && tag(n) === 'PRE') return n;
+    }
+    return null;
+  }
+  function isBlock(el) {
+    return el.nodeType === 1 && BLOCKS[tag(el)] === 1;
+  }
+  function hasBlockChild(el) {
+    for (var i = 0; i < el.children.length; i++) {
+      var c = el.children[i];
+      if (SKIP[tag(c)] || isHidden(c)) continue;
+      if (isBlock(c)) return true;
+    }
+    return false;
+  }
+
+  var lines = [];
+  var buf = [];
+  var bufPre = false;
+  var hasMedia = false;
+
+  function flush(forceEmpty) {
+    if (buf.length === 0) {
+      if (forceEmpty) lines.push('');
+      bufPre = false;
+      return;
+    }
+    var text = '';
+    for (var i = 0; i < buf.length; i++) {
+      if (buf[i] === null) {
+        text += '\n';
+      } else {
+        text += bufPre ? buf[i] : buf[i].replace(/[\s\u00A0]+/g, ' ');
+      }
+    }
+    if (bufPre) {
+      var preParts = text.split('\n');
+      for (var p = 0; p < preParts.length; p++) {
+        lines.push(preParts[p]);
+      }
+    } else {
+      var visible = text.replace(/[\s\u00A0\n]/g, '');
+      if (visible === '') {
+        var breaks = (text.match(/\n/g) || []).length;
+        for (var b = 0; b < breaks; b++) lines.push('');
+        if (breaks === 0 && forceEmpty) lines.push('');
+      } else {
+        var parts = text.split('\n');
+        for (var j = 0; j < parts.length; j++) {
+          lines.push(parts[j].replace(/^[\s\u00A0]+|[\s\u00A0]+$/g, ''));
+        }
+      }
+    }
+    buf = [];
+    bufPre = false;
+  }
+
+  function rubyBase(node) {
+    var s = '';
+    for (var i = 0; i < node.childNodes.length; i++) {
+      var c = node.childNodes[i];
+      if (c.nodeType === 3) {
+        s += c.data;
+      } else if (c.nodeType === 1) {
+        var name = tag(c);
+        if (name === 'RT' || name === 'RP' || name === 'RTC') {
+          continue;
+        }
+        s += (name === 'RUBY') ? rubyText(c) : rubyBase(c);
+      }
+    }
+    return s;
+  }
+  function rubyAnnotation(rt) {
+    var text = (rt.textContent || '').replace(/\s+/g, ' ').trim();
+    return text === '' ? '' : '\uFF08' + text + '\uFF09';
+  }
+  function rubyText(node) {
+    var ann = '';
+    for (var i = 0; i < node.childNodes.length; i++) {
+      var c = node.childNodes[i];
+      if (c.nodeType !== 1) continue;
+      var name = tag(c);
+      if (name === 'RT') {
+        ann += rubyAnnotation(c);
+      } else if (name === 'RTC') {
+        for (var j = 0; j < c.children.length; j++) {
+          if (tag(c.children[j]) === 'RT') {
+            ann += rubyAnnotation(c.children[j]);
+          }
+        }
+      }
+    }
+    return rubyBase(node) + ann;
+  }
+
+  function walkInline(node, inPre) {
+    if (node.nodeType === 3) {
+      buf.push(node.data);
+      if (inPre) bufPre = true;
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    var name = tag(node);
+    if (name === 'IMG' || name === 'VIDEO' || name === 'AUDIO' ||
+        name === 'CANVAS' || name === 'OBJECT' || name === 'EMBED' ||
+        name === 'IFRAME') {
+      hasMedia = true;
+    }
+    if (SKIP[name] || isHidden(node)) return;
+    if (name === 'BR') {
+      buf.push(null);
+      return;
+    }
+    if (name === 'RUBY') {
+      buf.push(rubyText(node));
+      if (inPre) bufPre = true;
+      return;
+    }
+    var pre = inPre || name === 'PRE';
+    if (pre) bufPre = true;
+    for (var i = 0; i < node.childNodes.length; i++) {
+      walkInline(node.childNodes[i], pre);
+    }
+    if (name === 'TD' || name === 'TH') buf.push('\t');
+  }
+
+  function walkBlock(el) {
+    var pre = tag(el) === 'PRE';
+    if (!hasBlockChild(el)) {
+      buf = [];
+      bufPre = pre;
+      for (var i = 0; i < el.childNodes.length; i++) {
+        walkInline(el.childNodes[i], pre);
+      }
+      flush(true);
+      return;
+    }
+    for (var j = 0; j < el.childNodes.length; j++) {
+      var c = el.childNodes[j];
+      if (c.nodeType === 1 && isBlock(c) && !SKIP[tag(c)] && !isHidden(c)) {
+        flush(false);
+        walkBlock(c);
+      } else {
+        walkInline(c, pre);
+      }
+    }
+    flush(false);
+  }
+
+  // When both ends of the selection live in the same <pre>, cloneContents
+  // returns bare text nodes and loses the PRE ancestor that tells flush()
+  // to preserve whitespace. Restore that context for the top-level nodes.
+  var startPre = nearestPre(range.startContainer);
+  var endPre = nearestPre(range.endContainer);
+  var selectionInPre = startPre && startPre === endPre;
+
+  for (var i = 0; i < frag.childNodes.length; i++) {
+    var c = frag.childNodes[i];
+    if (c.nodeType === 1 && isBlock(c) && !SKIP[tag(c)] && !isHidden(c)) {
+      flush(false);
+      walkBlock(c);
+    } else {
+      walkInline(c, selectionInPre);
+    }
+  }
+  flush(false);
+
+  // Only trim outer blank lines when the selection contains visible text.
+  // An all-blank selection must keep its blank lines instead.
+  var hasVisibleText = false;
+  for (var k = 0; k < lines.length; k++) {
+    if (lines[k].replace(/[\s\u00A0]/g, '') !== '') {
+      hasVisibleText = true;
+      break;
+    }
+  }
+  if (hasVisibleText) {
+    while (lines.length > 0 && lines[0].replace(/[\s\u00A0]/g, '') === '') {
+      lines.shift();
+    }
+    while (lines.length > 0 &&
+           lines[lines.length - 1].replace(/[\s\u00A0]/g, '') === '') {
+      lines.pop();
+    }
+  }
+
+  if (!hasVisibleText && hasMedia) {
+    // Keep the engine's native copy for selections that are only images
+    // or other non-text media.
+    return { ok: false, reason: 'media-only' };
+  }
+  return { ok: true, text: lines.join('\n') };
+})();
+)JS";
 
 
 struct JSResult {
@@ -115,13 +354,16 @@ ViewPreview::ViewPreview(QWidget *parent, bool setbackground)
       m_CaretLocationUpdate(QString()),
       m_CustomSetDocumentInProgress(false),
       m_pendingScrollToFragment(QString()),
+      m_LastHttpCacheClearMsecs(0),
       m_LoadOkay(false),
       m_overlay(new LoadingOverlay(this))
 {
     setPage(m_ViewWebPage);
     // Now handled in the WebEngPage constructor to be faster
     // page()->setBackgroundColor(Utility::WebViewBackgroundColor(true));
-    setContextMenuPolicy(Qt::CustomContextMenu);
+    // Keep the default context-menu policy so contextMenuEvent() receives
+    // the web page's context menu requests; the menu is built there.
+    setContextMenuPolicy(Qt::DefaultContextMenu);
     // Set the Zoom factor but be sure no signals are set because of this.
     SettingsStore settings;
     SetCurrentZoomFactor(settings.zoomPreview());
@@ -180,9 +422,18 @@ void ViewPreview::CustomSetDocument(const QString &path, const QString &html)
         // StoreCurrentCaretLocation();
  
         // keep memory footprint small clear any caches when a new page loads
+        // but throttle it: clearing on every document switch is expensive and
+        // can race with an in-progress load
         if (url().toLocalFile() != path) {
-            page()->profile()->clearHttpCache();
-        } 
+            static const qint64 HTTP_CACHE_CLEAR_INTERVAL_MS = 60000;
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (m_LastHttpCacheClearMsecs == 0 ||
+                now - m_LastHttpCacheClearMsecs >= HTTP_CACHE_CLEAR_INTERVAL_MS) {
+                qDebug() << "ViewPreview: clearing HTTP cache before loading" << path;
+                page()->profile()->clearHttpCache();
+                m_LastHttpCacheClearMsecs = now;
+            }
+        }
     }
 
     m_isLoadFinished = false;
@@ -351,11 +602,18 @@ QString ViewPreview::GetHTML() const
  {
      HTMLResult * pres = new HTMLResult();
      page()->toHtml(SetToHTMLResultFunctor(pres));
-     while(!pres->isFinished()) {
+     QDeadlineTimer deadline(5000);  // in milliseconds
+     while(!pres->isFinished() && !deadline.hasExpired()) {
          qApp->processEvents(QEventLoop::ExcludeUserInputEvents | QEventLoop::ExcludeSocketNotifiers, 100);
      }
-     QString res = pres->res;
-     delete pres;
+     QString res;
+     if (pres->isFinished()) {
+         res = pres->res;
+         delete pres;
+     } else {
+         qWarning() << "Error: ViewPreview::GetHTML timed out";
+         qWarning() << "   ... intentionally leaking the HTMLResult structure";
+     }
      return res;
  }
 
@@ -396,6 +654,130 @@ void ViewPreview::DoJavascript(const QString &javascript)
     if (!m_isLoadFinished) return;
 
     page()->runJavaScript(javascript,QWebEngineScript::ApplicationWorld);
+}
+
+
+void ViewPreview::CopySelectionToClipboard()
+{
+    if (!page()) {
+        return;
+    }
+    if (!m_isLoadFinished) {
+        return;
+    }
+
+    if (!page()->settings()->testAttribute(QWebEngineSettings::JavascriptEnabled)) {
+        // The user disabled JavaScript; the normalized copy is unavailable
+        // and the engine's native copy is the only possible path.
+        triggerPageAction(QWebEnginePage::Copy);
+        return;
+    }
+
+    QPointer<ViewPreview> guard(this);
+    page()->runJavaScript(QString::fromLatin1(COPY_SELECTION_JS),
+                          [guard](const QVariant &result) {
+        if (!guard) {
+            return;
+        }
+        const QVariantMap map = result.toMap();
+        if (!result.isValid() || !map.contains(QStringLiteral("ok"))) {
+            qWarning() << "ViewPreview: copy script returned an invalid result"
+                       << result;
+            guard->triggerPageAction(QWebEnginePage::Copy);
+            return;
+        }
+        if (map.value(QStringLiteral("ok")).toBool()) {
+            // An empty string is a valid result (a selection consisting
+            // only of blank blocks), so never treat it as a failure.
+            QApplication::clipboard()->setText(
+                map.value(QStringLiteral("text")).toString());
+            return;
+        }
+        const QString reason = map.value(QStringLiteral("reason")).toString();
+        if (reason == QStringLiteral("media-only")) {
+            // Preserve the engine's image/media copy support.
+            guard->triggerPageAction(QWebEnginePage::Copy);
+        } else if (reason != QStringLiteral("no-selection")) {
+            qWarning() << "ViewPreview: copy script failed:" << reason;
+            guard->triggerPageAction(QWebEnginePage::Copy);
+        }
+    });
+}
+
+
+void ViewPreview::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!page()) {
+        QWebEngineView::contextMenuEvent(event);
+        return;
+    }
+
+    // Build our own menu so every entry can be translated and the Copy
+    // entry can be routed through the normalized copy above.
+    QMenu menu(this);
+
+    auto action_enabled = [this](QWebEnginePage::WebAction web_action) {
+        QAction *source = page()->action(web_action);
+        return source && source->isEnabled();
+    };
+    auto add_source_action = [this, &menu](QWebEnginePage::WebAction web_action,
+                                           const QString &text) {
+        QAction *source = page()->action(web_action);
+        if (!source || !source->isEnabled()) {
+            return;
+        }
+        QAction *item = menu.addAction(text);
+        if (web_action == QWebEnginePage::Copy) {
+            connect(item, &QAction::triggered,
+                    this, &ViewPreview::CopySelectionToClipboard);
+        } else {
+            connect(item, &QAction::triggered, source, &QAction::trigger);
+        }
+    };
+
+    const bool has_history = action_enabled(QWebEnginePage::Undo) ||
+                             action_enabled(QWebEnginePage::Redo);
+    const bool has_edit = action_enabled(QWebEnginePage::Cut) ||
+                          action_enabled(QWebEnginePage::Copy) ||
+                          action_enabled(QWebEnginePage::Paste);
+    const bool has_select = action_enabled(QWebEnginePage::SelectAll);
+    const QString hover_url = GetHoverUrl();
+    const bool has_link = !hover_url.isEmpty();
+
+    if (has_history) {
+        add_source_action(QWebEnginePage::Undo, tr("&Undo"));
+        add_source_action(QWebEnginePage::Redo, tr("&Redo"));
+        menu.addSeparator();
+    }
+    if (has_edit) {
+        add_source_action(QWebEnginePage::Cut, tr("Cu&t"));
+        add_source_action(QWebEnginePage::Copy, tr("&Copy"));
+        add_source_action(QWebEnginePage::Paste, tr("&Paste"));
+        menu.addSeparator();
+    }
+    if (has_select) {
+        add_source_action(QWebEnginePage::SelectAll, tr("Select &All"));
+        menu.addSeparator();
+    }
+    if (has_link) {
+        QAction *link_action = menu.addAction(tr("Copy &Link Address"));
+        connect(link_action, &QAction::triggered, this, [hover_url]() {
+            QApplication::clipboard()->setText(hover_url);
+        });
+        menu.addSeparator();
+    }
+
+    QAction *reload_action = menu.addAction(tr("&Reload Preview"));
+    connect(reload_action, &QAction::triggered,
+            this, &ViewPreview::ReloadPreviewRequested);
+    QAction *print_action = menu.addAction(tr("&Print..."));
+    connect(print_action, &QAction::triggered,
+            this, &ViewPreview::PrintRequested);
+    QAction *inspect_action = menu.addAction(tr("&Inspect Page"));
+    connect(inspect_action, &QAction::triggered,
+            this, &ViewPreview::InspectPageRequested);
+
+    menu.exec(event->globalPos());
 }
 
 

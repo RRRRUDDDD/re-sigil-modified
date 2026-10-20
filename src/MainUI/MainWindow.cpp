@@ -27,6 +27,9 @@
 #include <QFileInfo>
 #include <QThread>
 #include <QTimer>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QPointer>
 #include <QtConcurrent>
 #include <QFuture>
 #include <QDesktopServices>
@@ -101,6 +104,7 @@
 #include "Importers/ImportHTML.h"
 #include "MainUI/BookBrowser.h"
 #include "MainUI/ClipsWindow.h"
+#include "MainUI/CSSWindow.h"
 #include "MainUI/MainWindow.h"
 #include "MainUI/FindReplace.h"
 #include "MainUI/PreviewWindow.h"
@@ -116,7 +120,6 @@
 #include "Misc/PluginDB.h"
 #include "EmbedPython/PythonRoutines.h"
 #include "Misc/SettingsStore.h"
-#include "Misc/SleepFunctions.h"
 #include "Misc/SpellCheck.h"
 #include "Misc/TempFolder.h"
 #include "Misc/TOCHTMLWriter.h"
@@ -165,6 +168,7 @@ static const QString VALIDATION_RESULTS_VIEW_NAME = "validationresultsname";
 static const QString TABLE_OF_CONTENTS_NAME       = "tableofcontents";
 static const QString PREVIEW_WINDOW_NAME          = "previewwindow";
 static const QString CLIPS_WINDOW_NAME            = "clipswindow";
+static const QString CSS_WINDOW_NAME              = "csswindow";
 static const QString FRAME_NAME                   = "managerframe";
 static const QString TAB_STYLE_SHEET              = "#managerframe {border-top: 0px solid white;"
         "border-left: 1px solid grey;"
@@ -237,6 +241,7 @@ MainWindow::MainWindow(const QString &openfilepath,
     m_TableOfContents(NULL),
     m_ValidationResultsView(NULL),
     m_PreviewWindow(NULL),
+    m_CSSWindow(NULL),
     m_slZoomSlider(NULL),
     m_lbZoomLabel(NULL),
     c_SaveFilters(GetSaveFiltersMap()),
@@ -326,6 +331,7 @@ MainWindow::~MainWindow()
     if (m_Clips) delete m_Clips;
     if (m_BookBrowser) delete m_BookBrowser;
     if (m_TabManager) delete m_TabManager;
+    if (m_CSSWindow) delete m_CSSWindow;
     if (m_PreviewWindow) delete m_PreviewWindow;
 #endif
 
@@ -1895,9 +1901,32 @@ void MainWindow::OpenResourceAndWaitUntilLoaded(Resource *resource,
         bool precede_current_tab)
 {
     OpenResource(resource, line_to_scroll_to, position_to_scroll_to, caret_location_to_scroll_to, fragment, precede_current_tab);
-    while (!GetCurrentContentTab()->IsLoadingFinished()) {
-        qApp->processEvents();
-        SleepFunctions::msleep(100);
+
+    QPointer<ContentTab> tab = GetCurrentContentTab();
+    if (!tab) {
+        qWarning() << "MainWindow::OpenResourceAndWaitUntilLoaded: no current tab";
+        return;
+    }
+
+    // Bounded wait that does not dispatch user input. Without this a failed
+    // load loops forever and rapid Find clicks re-enter the search.
+    QElapsedTimer timer;
+    timer.start();
+    const int timeout_ms = 5000;
+    while (!tab->IsLoadingFinished() && timer.elapsed() < timeout_ms) {
+        QCoreApplication::processEvents(
+            QEventLoop::ExcludeUserInputEvents | QEventLoop::ExcludeSocketNotifiers, 50);
+        QThread::msleep(10);
+        if (!tab) {
+            qWarning() << "MainWindow::OpenResourceAndWaitUntilLoaded: tab deleted while loading";
+            return;
+        }
+    }
+
+    if (!tab->IsLoadingFinished()) {
+        qWarning() << "MainWindow::OpenResourceAndWaitUntilLoaded: timed out after"
+                   << timeout_ms << "ms for resource:"
+                   << (resource ? resource->GetRelativePath() : QString("<null>"));
     }
 }
 
@@ -4989,6 +5018,15 @@ void MainWindow::UpdatePreviewCSSRequest()
 }
 
 
+void MainWindow::CSSWindowSaved()
+{
+    if (m_Book) {
+        m_Book->SetModified(true);
+    }
+    UpdatePreviewCSSRequest();
+}
+
+
 void MainWindow::ScrollPreview()
 {
     DBG qDebug() << "in ScrollPreview called from FlowTab";
@@ -5593,6 +5631,12 @@ void MainWindow::SetNewBook(QSharedPointer<Book> new_book)
     }
     CleanCheckpointCheckoutCache();
 
+    // Detach the CSS window before the old book (and its resources) is
+    // destroyed so it never touches dangling CSSResource pointers.
+    if (m_CSSWindow) {
+        m_CSSWindow->SetBook(nullptr);
+    }
+
     m_Book = new_book;
     m_BookBrowser->SetBook(m_Book);
     m_TableOfContents->SetBook(m_Book);
@@ -5601,6 +5645,9 @@ void MainWindow::SetNewBook(QSharedPointer<Book> new_book)
     m_IndexEditor->SetBook(m_Book);
     m_ClipEditor->SetBook(m_Book);
     m_SpellcheckEditor->SetBook(m_Book);
+    if (m_CSSWindow) {
+        m_CSSWindow->SetBook(m_Book.data());
+    }
     SpellCheck *sc = SpellCheck::instance();
     sc->clearIgnoredWords();
     ResetLinkOrStyleBookmark();
@@ -5618,6 +5665,10 @@ void MainWindow::ResourcesAddedOrDeletedOrMoved()
 {
     // MainWindow::clearMemoryCaches();
     m_Book->GetFolderKeeper()->RefreshGroupFolders();
+
+    if (m_CSSWindow) {
+        m_CSSWindow->RefreshCSSList();
+    }
 
     // Make sure currently visible tab is updated immediately
     FlowTab *flow_tab = GetCurrentFlowTab();
@@ -6378,10 +6429,18 @@ void MainWindow::ExtendUI()
     addDockWidget(Qt::LeftDockWidgetArea, m_Clips);
     m_Clips->hide();
 
+    m_CSSWindow = new CSSWindow(this);
+    m_CSSWindow->setObjectName(CSS_WINDOW_NAME);
+    addDockWidget(Qt::RightDockWidgetArea, m_CSSWindow);
+    splitDockWidget(m_PreviewWindow, m_CSSWindow, Qt::Vertical);
+    m_CSSWindow->hide();
+
     ui.menuView->addSeparator();
     ui.menuView->addAction(m_BookBrowser->toggleViewAction());
     m_BookBrowser->toggleViewAction()->setShortcut(QKeySequence(Qt::ALT | Qt::Key_F1));
     ui.menuView->addAction(m_Clips->toggleViewAction());
+    ui.menuView->addAction(m_CSSWindow->toggleViewAction());
+    m_CSSWindow->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_E));
     ui.menuView->addAction(m_PreviewWindow->toggleViewAction());
     m_PreviewWindow->toggleViewAction()->setShortcut(QKeySequence(Qt::Key_F10));
     ui.menuView->addAction(m_TableOfContents->toggleViewAction());
@@ -6845,6 +6904,7 @@ void MainWindow::ConnectSignalsToSlots()
     connect(m_PreviewWindow, SIGNAL(RequestPreviewReload()),       this, SLOT(UpdatePreview())); 
     connect(m_PreviewWindow, SIGNAL(OpenUrlRequest(const QUrl &)), this, SLOT(OpenUrl(const QUrl &)));
     connect(m_PreviewWindow, SIGNAL(ScrollToFragmentRequest(const QString &)), this, SLOT(ScrollCVToFragment(const QString &)));
+    connect(m_CSSWindow, SIGNAL(CSSSaved()), this, SLOT(CSSWindowSaved()));
     connect(qApp, SIGNAL(focusChanged(QWidget *, QWidget *)), this, SLOT(ApplicationFocusChanged(QWidget *, QWidget *)));
     MainApplication *mainApplication = qobject_cast<MainApplication *>(qApp);
     connect(mainApplication, SIGNAL(applicationPaletteChanged()), this, SLOT(ApplicationPaletteChanged()));

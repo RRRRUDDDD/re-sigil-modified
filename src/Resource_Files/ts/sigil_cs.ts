@@ -865,6 +865,37 @@ pokud je ve vašem CSS stanovena rodina bezpatkového písma</translation>
 <context>
     <name>BookBrowser</name>
     <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="99"/>
+        <location filename="../../MainUI/BookBrowser.cpp" line="322"/>
+        <source>Move in Reading Order</source>
+        <translation>Přesunout v pořadí čtení</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="319"/>
+        <source>Select the HTML file to move the selected file(s) after:</source>
+        <translation>Vyberte soubor HTML, za který se mají vybrané soubory přesunout:</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="320"/>
+        <source>Select the HTML file to move the selected file(s) before:</source>
+        <translation>Vyberte soubor HTML, před který se mají vybrané soubory přesunout:</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="375"/>
+        <source>Selected HTML file(s) moved in the reading order.</source>
+        <translation>Vybrané soubory HTML byly přesunuty v pořadí čtení.</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1987"/>
+        <source>Move Before HTML File...</source>
+        <translation>Přesunout před soubor HTML...</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1988"/>
+        <source>Move After HTML File...</source>
+        <translation>Přesunout za soubor HTML...</translation>
+    </message>
+    <message>
         <location filename="../../MainUI/BookBrowser.cpp" line="82"/>
         <source>Book Browser</source>
         <translation>Prohlížeč knihy</translation>

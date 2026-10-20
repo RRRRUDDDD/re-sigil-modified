@@ -32,6 +32,7 @@
 #include "ViewEditors/Viewer.h"
 
 class QSize;
+class QContextMenuEvent;
 class LoadingOverlay;
 
 class ViewPreview : public QWebEngineView, public Viewer
@@ -54,6 +55,8 @@ public:
     bool IsLoadingFinished();
 
     QString GetHoverUrl();
+
+    void CopySelectionToClipboard();
 
     bool WasLoadOkay() { return m_LoadOkay; }
 
@@ -134,6 +137,12 @@ signals:
     void GoToPreviewLocationRequest();
 
     void ViewProgress(int);
+
+    void ReloadPreviewRequested();
+
+    void PrintRequested();
+
+    void InspectPageRequested();
     
 protected:
     /**
@@ -151,6 +160,8 @@ protected:
     void DoJavascript(const QString &javascript);
 
     bool m_isLoadFinished;
+
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 protected slots:
 
@@ -236,6 +247,7 @@ private:
 
     bool  m_CustomSetDocumentInProgress;
     QString m_pendingScrollToFragment;
+    qint64 m_LastHttpCacheClearMsecs;
 
     bool m_LoadOkay;
     // QAction *m_InspectElement;

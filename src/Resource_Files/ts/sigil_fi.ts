@@ -865,6 +865,37 @@ jos CSS-koodisi asettaa pääteviivattoman fonttityypin</translation>
 <context>
     <name>BookBrowser</name>
     <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="99"/>
+        <location filename="../../MainUI/BookBrowser.cpp" line="322"/>
+        <source>Move in Reading Order</source>
+        <translation>Siirrä lukujärjestyksessä</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="319"/>
+        <source>Select the HTML file to move the selected file(s) after:</source>
+        <translation>Valitse HTML-tiedosto, jonka jälkeen valitut tiedostot siirretään:</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="320"/>
+        <source>Select the HTML file to move the selected file(s) before:</source>
+        <translation>Valitse HTML-tiedosto, jota ennen valitut tiedostot siirretään:</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="375"/>
+        <source>Selected HTML file(s) moved in the reading order.</source>
+        <translation>Valitut HTML-tiedostot siirrettiin lukujärjestyksessä.</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1987"/>
+        <source>Move Before HTML File...</source>
+        <translation>Siirrä ennen HTML-tiedostoa...</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1988"/>
+        <source>Move After HTML File...</source>
+        <translation>Siirrä HTML-tiedoston jälkeen...</translation>
+    </message>
+    <message>
         <location filename="../../MainUI/BookBrowser.cpp" line="82"/>
         <source>Book Browser</source>
         <translation>Kirjan tiedostot</translation>

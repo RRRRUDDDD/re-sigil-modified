@@ -27,6 +27,7 @@
 
 #include <QPushButton>
 #include <QAction>
+#include <QSet>
 #include <QtWebEngineWidgets>
 #include <QtWebEngineCore>
 #include <QWebEngineView>
@@ -124,6 +125,7 @@ private:
     void UpdateWindowTitle();
     bool fixup_fullscreen_svg_images(const QString &text);
     void SetupOverlayTimer();
+    void InstallPreviewFilters(QObject *object);
     
     const QString titleText();
 
@@ -152,6 +154,7 @@ private:
     QList<ElementIndex> m_location;
     
     QTimer m_OverlayTimer;
+    QSet<QObject *> m_InstalledFilters;
     bool m_updatingPage;
     bool m_usingMathML;
     int m_cycleCSSLevel;

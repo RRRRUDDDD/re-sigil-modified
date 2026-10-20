@@ -57,6 +57,12 @@ def buildxml(mentry):
     tname, tcontent, tattr = mentry
     if tname is None:
         return ""
+    # comments are passed through verbatim, they have no attributes and
+    # their body must not be xml escaped
+    if tname == '!--':
+        if tcontent is None:
+            tcontent = ""
+        return '<!--' + tcontent + '-->\n'
     tag = []
     tag.append('<' + tname)
     if tattr is not None:
@@ -109,6 +115,11 @@ class OPFMetadataParser(object):
                 tcontent = text.rstrip(" \r\n")
             else: # we have a tag
                 ttype, tname, tattr = self._parsetag(tag)
+                # comments are yielded as they are found and must not disturb
+                # the text content being collected for the enclosing tag
+                if tname == '!--':
+                    yield ".".join(prefix), tname, tattr, None
+                    continue
                 if ttype == "begin":
                     tcontent = None
                     prefix.append(tname)
@@ -133,6 +144,16 @@ class OPFMetadataParser(object):
     def _parseData(self):
         cnt = 0
         for prefix, tname, tattr, tcontent in self._opf_tag_iter():
+            # comments inside the metadata section.  The metadata editor
+            # rebuilds that whole section, so a comment it does not know about
+            # would be dropped.  Carry it along as an unrecognized metadata
+            # entry, which is exactly how anything else the editor does not
+            # model is passed through untouched.  Comments elsewhere in the opf
+            # need no help - only the metadata section gets rewritten.
+            if tname == '!--':
+                if "metadata" in prefix:
+                    self.metadata.append((tname, tattr.get('comment', ''), OrderedDict()))
+                continue
             # package
             if tname == "package":
                 ver = tattr.pop("version", "2.0")
@@ -244,7 +265,8 @@ class OPFMetadataParser(object):
         if tname.startswith("!--"):
             tname = "!--"
             ttype = 'single'
-            comment = s[4:-3].strip()
+            # keep the body verbatim so the comment round trips unchanged
+            comment = s[4:-3]
             tattr['comment'] = comment
         if tname == "?xml":
             tname = "xml"

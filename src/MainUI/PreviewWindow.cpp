@@ -23,6 +23,8 @@
 
 #include <QEvent>
 #include <QMouseEvent>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QApplication>
 #include <QClipboard>
 #include <QVBoxLayout>
@@ -35,6 +37,7 @@
 #include <QStyleOptionFrame>
 #include <QTimer>
 #include <QProgressBar>
+#include <QShortcut>
 #include <QApplication>
 #include <QDebug>
 
@@ -64,6 +67,15 @@ static const QString MATHJAX3_CONFIG =
 
 
 #define DBG if(0)
+
+static bool IsCopyKeyEvent(QEvent *event)
+{
+    if (event->type() != QEvent::KeyPress &&
+        event->type() != QEvent::ShortcutOverride) {
+        return false;
+    }
+    return static_cast<QKeyEvent *>(event)->matches(QKeySequence::Copy);
+}
 
 PreviewWindow::PreviewWindow(QWidget *parent)
     :
@@ -226,13 +238,15 @@ void PreviewWindow::SetupView()
 {
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
-    // QWebEngineView events are routed to their parent
-    m_Preview->installEventFilter(this);
+    // QWebEngineView events are routed to their parent and the actual page is
+    // rendered by child widgets that can appear after the page loads. Install
+    // the filter recursively so Ctrl+C is always seen before the renderer.
+    InstallPreviewFilters(m_Preview);
 
 #if !defined(Q_OS_WIN32) && !defined(Q_OS_MAC)
     // this may be needed by all platforms in the future
     QWidget * fp = m_Preview->focusProxy();
-    if (fp) fp->installEventFilter(this);
+    if (fp) InstallPreviewFilters(fp);
 #endif
 
     m_Layout->setContentsMargins(0, 0, 0, 0);
@@ -274,12 +288,32 @@ void PreviewWindow::SetupView()
     m_buttons->addWidget(tb);
     m_Layout->addLayout(m_buttons);
 
+    QShortcut *copy_shortcut = new QShortcut(QKeySequence::Copy, this);
+    copy_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(copy_shortcut, &QShortcut::activated, this, &PreviewWindow::CopyPreview);
+
     m_MainWidget->setLayout(m_Layout);
     setWidget(m_MainWidget);
 
     m_Preview->Zoom();
 
     QApplication::restoreOverrideCursor();
+}
+
+
+void PreviewWindow::InstallPreviewFilters(QObject *object)
+{
+    if (!object) {
+        return;
+    }
+    if (qobject_cast<QWidget *>(object) && !m_InstalledFilters.contains(object)) {
+        object->installEventFilter(this);
+        m_InstalledFilters.insert(object);
+    }
+    const QObjectList children = object->children();
+    for (QObject *child : children) {
+        InstallPreviewFilters(child);
+    }
 }
 
 
@@ -311,6 +345,15 @@ bool PreviewWindow::UpdatePage(QString filename_url, QString text, QList<Element
     }
 
     m_updatingPage = true;
+    // DocumentLoaded may never arrive if a load fails; do not stay stuck.
+    QTimer::singleShot(10000, this, [this]() {
+        if (m_updatingPage) {
+            qWarning() << "PreviewWindow::UpdatePage: timed out waiting for DocumentLoaded for" << m_Filepath;
+            m_updatingPage = false;
+            m_OverlayTimer.stop();
+            m_progress->reset();
+        }
+    });
     SetCaretLocation(location);
     m_progress->setRange(0,100);
     m_progress->setValue(0);
@@ -516,12 +559,27 @@ bool PreviewWindow::eventFilter(QObject *object, QEvent *event)
 {
   switch (event->type()) {
     case QEvent::ChildAdded:
-      if (object == m_Preview) {
+      if (object == m_Preview || m_InstalledFilters.contains(object)) {
           DBG qDebug() << "child add event";
           const QChildEvent *childEvent(static_cast<QChildEvent*>(event));
           if (childEvent->child()) {
-              childEvent->child()->installEventFilter(this);
+              InstallPreviewFilters(childEvent->child());
           }
+      }
+      break;
+    case QEvent::ShortcutOverride:
+      if (IsCopyKeyEvent(event)) {
+          // Stop the shortcut system and the renderer from grabbing Ctrl+C;
+          // the normalized copy is performed on the matching KeyPress below.
+          event->accept();
+          return true;
+      }
+      break;
+    case QEvent::KeyPress:
+      if (IsCopyKeyEvent(event)) {
+          CopyPreview();
+          event->accept();
+          return true;
       }
       break;
     case QEvent::MouseButtonPress:
@@ -653,7 +711,7 @@ void PreviewWindow::SelectAllPreview()
 
 void PreviewWindow::CopyPreview()
 {
-    m_Preview->triggerPageAction(QWebEnginePage::Copy);
+    m_Preview->CopySelectionToClipboard();
 }
 
 void PreviewWindow::ReloadPreview()
@@ -690,6 +748,9 @@ void PreviewWindow::ConnectSignalsToSlots()
     connect(m_Preview,   SIGNAL(LinkClicked(const QUrl &)), this, SLOT(LinkClicked(const QUrl &)));
     connect(m_Preview,   SIGNAL(DocumentLoaded()),          this, SLOT(UpdatePageDone()));
     connect(m_Preview,   SIGNAL(ViewProgress(int)),         this, SLOT(setProgress(int)));
+    connect(m_Preview,   SIGNAL(ReloadPreviewRequested()),  this, SLOT(ReloadPreview()));
+    connect(m_Preview,   SIGNAL(PrintRequested()),          this, SLOT(PrintRendered()));
+    connect(m_Preview,   SIGNAL(InspectPageRequested()),    this, SLOT(InspectPreviewPage()));
     connect(m_inspectAction, SIGNAL(triggered()),           this, SLOT(InspectPreviewPage()));
     connect(m_selectAction,  SIGNAL(triggered()),           this, SLOT(SelectAllPreview()));
     connect(m_copyAction,    SIGNAL(triggered()),           this, SLOT(CopyPreview()));

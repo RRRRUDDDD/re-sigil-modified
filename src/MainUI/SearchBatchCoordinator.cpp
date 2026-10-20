@@ -176,6 +176,7 @@ SearchBatch::Result SearchBatchCoordinator::CommitStagedResult(
 
     QList<TextResource*> changedResources;
     QStringList appliedPaths;
+    QSet<QString> undoableApplied;
     for (const QString& path : commitOrder) {
         TextResource* resource = resources.value(path, nullptr);
         if (!resource) {
@@ -199,6 +200,7 @@ SearchBatch::Result SearchBatchCoordinator::CommitStagedResult(
             appliedPaths.append(path);
             if (resource->SetTextAsUndoableEdit(result.changedTexts.value(path))) {
                 changedResources.append(resource);
+                undoableApplied.insert(path);
             }
             if (resource->GetText() != result.changedTexts.value(path)) {
                 result.success = false;
@@ -215,10 +217,25 @@ SearchBatch::Result SearchBatchCoordinator::CommitStagedResult(
         for (auto it = appliedPaths.crbegin(); it != appliedPaths.crend(); ++it) {
             const QString& path = *it;
             TextResource* resource = resources.value(path, nullptr);
-            if (resource) {
-                QWriteLocker locker(&resource->GetLock());
-                resource->SetText(snapshot.originalTexts.value(path));
+            if (!resource) {
+                continue;
             }
+            const QString& originalText = snapshot.originalTexts.value(path);
+            QWriteLocker locker(&resource->GetLock());
+            if (resource->GetText() == originalText) {
+                continue;
+            }
+            // Undo the step this commit pushed rather than reassigning the
+            // text: SetText() goes through QTextDocument::setPlainText(), which
+            // throws away that document's whole undo/redo stack and with it
+            // every edit the user made before this batch ever started.
+            if (undoableApplied.contains(path) && resource->UndoLastEdit() &&
+                resource->GetText() == originalText) {
+                continue;
+            }
+            // Only if the undo could not restore it: correct text matters more
+            // than the undo history.
+            resource->SetText(originalText);
         }
         return result;
     }

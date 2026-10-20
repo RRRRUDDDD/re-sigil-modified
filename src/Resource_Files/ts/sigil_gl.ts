@@ -861,6 +861,37 @@ if a sans-serif font-family specified in your CSS</source>
 <context>
     <name>BookBrowser</name>
     <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="99"/>
+        <location filename="../../MainUI/BookBrowser.cpp" line="322"/>
+        <source>Move in Reading Order</source>
+        <translation>Mover na orde de lectura</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="319"/>
+        <source>Select the HTML file to move the selected file(s) after:</source>
+        <translation>Seleccione o ficheiro HTML despois do cal se moverán os ficheiros seleccionados:</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="320"/>
+        <source>Select the HTML file to move the selected file(s) before:</source>
+        <translation>Seleccione o ficheiro HTML antes do cal se moverán os ficheiros seleccionados:</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="375"/>
+        <source>Selected HTML file(s) moved in the reading order.</source>
+        <translation>Os ficheiros HTML seleccionados movéronse na orde de lectura.</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1987"/>
+        <source>Move Before HTML File...</source>
+        <translation>Mover antes do ficheiro HTML...</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1988"/>
+        <source>Move After HTML File...</source>
+        <translation>Mover despois do ficheiro HTML...</translation>
+    </message>
+    <message>
         <location filename="../../MainUI/BookBrowser.cpp" line="82"/>
         <source>Book Browser</source>
         <translation>Explorador do libro</translation>

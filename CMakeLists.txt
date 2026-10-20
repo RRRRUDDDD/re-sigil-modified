@@ -59,7 +59,7 @@ set( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake_e
 set( SIGIL_MAJOR_VERSION 1 )
 set( SIGIL_MINOR_VERSION 9 )
 set( SIGIL_REVISION_VERSION 30 )
-set( SIGIL_ADDTION_VERSION X5C )
+set( SIGIL_ADDTION_VERSION X5D )
 set( SIGIL_FULL_VERSION ${SIGIL_MAJOR_VERSION}.${SIGIL_MINOR_VERSION}.${SIGIL_REVISION_VERSION}.${SIGIL_ADDTION_VERSION} )
 
 if( UNIX AND NOT APPLE )
@@ -154,3 +154,9 @@ add_subdirectory( internal/gumbo )
 
 add_subdirectory( 3rdparty/ )
 add_subdirectory( src/ )
+
+option(SIGIL_BUILD_SECURITY_TESTS "Build focused security regression tests" OFF)
+if(SIGIL_BUILD_SECURITY_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

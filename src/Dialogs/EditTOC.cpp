@@ -30,6 +30,7 @@
 #include <QKeyEvent>
 #include <QPersistentModelIndex>
 #include <QTimer>
+#include <QDebug>
 #include <QtAlgorithms>
 
 #include "BookManipulation/Book.h"
@@ -38,6 +39,7 @@
 #include "Misc/SettingsStore.h"
 #include "Misc/Utility.h"
 #include "ResourceObjects/HTMLResource.h"
+#include "ResourceObjects/NCXResource.h"
 #include "ResourceObjects/OPFResource.h"
 #include "ResourceObjects/NavProcessor.h"
 #include "ResourceObjects/Resource.h"
@@ -114,13 +116,21 @@ void EditTOC::CreateTOCModel()
 
 void EditTOC::Save()
 {
+    TOCModel::TOCEntry toc_root = ConvertTableToEntries();
     QString version = m_Book->GetConstOPF()->GetEpubVersion();
     if (version.startsWith('3')) {
-        NavProcessor navproc(m_Book->GetConstOPF()->GetNavResource());
-        navproc.GenerateNavTOCFromTOCEntries(ConvertTableToEntries());
-    } else {
-        // this is safe as all epub2's must hve an ncx (if not we made one for them)
-        m_Book->GetNCX()->GenerateNCXFromTOCEntries(m_Book.data(), ConvertTableToEntries());
+        HTMLResource * nav_resource = m_Book->GetConstOPF()->GetNavResource();
+        if (nav_resource) {
+            NavProcessor navproc(nav_resource);
+            navproc.GenerateNavTOCFromTOCEntries(toc_root);
+        }
+    }
+    // All epub2's must have an ncx (if not we made one for them), while on epub3 the
+    // ncx is optional but may be kept around for epub2 reader compatibility.
+    // Whenever it exists, keep it in sync with the same toc tree so it can not go stale.
+    NCXResource * ncx_resource = m_Book->GetNCX();
+    if (ncx_resource) {
+        ncx_resource->GenerateNCXFromTOCEntries(m_Book.data(), toc_root);
     }
 }
 
@@ -133,13 +143,23 @@ TOCModel::TOCEntry EditTOC::ConvertItemToEntry(QStandardItem *item)
 {
     TOCModel::TOCEntry entry;
 
+    if (!item) {
+        qWarning() << "EditTOC::ConvertItemToEntry: null item";
+        return entry;
+    }
+
     if (item != m_TableOfContents->invisibleRootItem()) {
         entry.text = item->text();
         QStandardItem *parent_item = item->parent();
         if (!parent_item) {
             parent_item = m_TableOfContents->invisibleRootItem();
         }
-        entry.target = parent_item->child(item->row(), 1)->text();
+        QStandardItem *target_item = parent_item ? parent_item->child(item->row(), 1) : nullptr;
+        if (target_item) {
+            entry.target = target_item->text();
+        } else {
+            qWarning() << "EditTOC::ConvertItemToEntry: missing target item for row" << item->row();
+        }
     } else {
         entry.is_root = true;
     }
@@ -149,7 +169,12 @@ TOCModel::TOCEntry EditTOC::ConvertItemToEntry(QStandardItem *item)
     }
 
     for (int row = 0; row < item->rowCount(); row++) {
-        entry.children.append(ConvertItemToEntry(item->child(row, 0)));
+        QStandardItem *child_item = item->child(row, 0);
+        if (!child_item) {
+            qWarning() << "EditTOC::ConvertItemToEntry: null child at row" << row;
+            continue;
+        }
+        entry.children.append(ConvertItemToEntry(child_item));
     }
     return entry;
 }
@@ -158,13 +183,20 @@ void EditTOC::ExpandChildren(QStandardItem *item)
 {
     QModelIndexList indexes;
 
+    if (!item) {
+        return;
+    }
+
     if (item->hasChildren()) {
         for (int i = 0; i < item->rowCount(); i++) {
             ExpandChildren(item->child(i, 0));
         }
     }
 
-    ui.TOCTree->expand(item->index());
+    QModelIndex index = item->index();
+    if (index.isValid()) {
+        ui.TOCTree->expand(index);
+    }
 }
 
 void EditTOC::ReselectAndExpandItems(const QList<QStandardItem *> &items)
@@ -174,8 +206,13 @@ void EditTOC::ReselectAndExpandItems(const QList<QStandardItem *> &items)
     QList<QStandardItem *> valid_items;
 
     foreach(QStandardItem *item, items) {
+        if (!item) {
+            qWarning() << "EditTOC::ReselectAndExpandItems: null item";
+            continue;
+        }
         QModelIndex index = item->index();
         if (!index.isValid()) {
+            qWarning() << "EditTOC::ReselectAndExpandItems: invalid index";
             continue;
         }
         valid_items << item;
@@ -232,8 +269,15 @@ void EditTOC::MoveLeft()
         QList<QStandardItem *> range_items;
         for (int row = range.top(); row <= range.bottom(); row++) {
             QStandardItem *item = parent_item->child(row, 0);
+            if (!item) {
+                qWarning() << "EditTOC::MoveLeft: null item at row" << row;
+                continue;
+            }
             range_items << item;
             selected_items << item;  // Accumulate all items for reselection
+        }
+        if (range_items.isEmpty()) {
+            continue;
         }
         selected_ranges << SelectedRange { parent_item, range_items };
     }
@@ -254,6 +298,9 @@ void EditTOC::MoveLeft()
             return left_depth > right_depth;
         }
         if (left.parent == right.parent) {
+            if (left.items.isEmpty() || right.items.isEmpty()) {
+                return false;
+            }
             return left.items.first()->row() > right.items.first()->row();
         }
         return std::less<QStandardItem *>()(left.parent, right.parent);
@@ -269,7 +316,19 @@ void EditTOC::MoveLeft()
 
         int row_to_put = parent_item->row() + 1;
         foreach(QStandardItem *item, range.items) {
-            QList<QStandardItem *> row_items = parent_item->takeRow(item->row());
+            if (!item) {
+                continue;
+            }
+            if (item->parent() != parent_item) {
+                qWarning() << "EditTOC::MoveLeft: item parent changed unexpectedly";
+                continue;
+            }
+            const int item_row = item->row();
+            if (item_row < 0 || item_row >= parent_item->rowCount()) {
+                qWarning() << "EditTOC::MoveLeft: row out of range" << item_row;
+                continue;
+            }
+            QList<QStandardItem *> row_items = parent_item->takeRow(item_row);
             grandparent_item->insertRow(row_to_put, row_items);
             row_to_put++;
         }
@@ -307,19 +366,46 @@ void EditTOC::MoveRight()
         QList<QStandardItem *> range_items;
         for (int row = top_row; row <= bottom_row; row++) {
             QStandardItem *item = parent_item->child(row, 0);
+            if (!item) {
+                qWarning() << "EditTOC::MoveRight: null item at row" << row;
+                continue;
+            }
             range_items << item;
             selected_items << item;  // Accumulate all items for reselection
         }
+        if (range_items.isEmpty()) {
+            continue;
+        }
+
+        QStandardItem *new_parent = parent_item->child(top_row - 1, 0);
+        if (!new_parent) {
+            qWarning() << "EditTOC::MoveRight: null new parent at row" << (top_row - 1);
+            continue;
+        }
+
         parent_items << parent_item;
-        new_parent_items << parent_item->child(top_row - 1, 0);
+        new_parent_items << new_parent;
         selected_ranges << range_items;
     }
 
     for (int i = 0; i < selected_ranges.count(); i++) {
         QStandardItem *parent_item = parent_items.at(i);
         QStandardItem *new_parent = new_parent_items.at(i);
+        if (!parent_item || !new_parent) {
+            qWarning() << "EditTOC::MoveRight: null parent while moving";
+            continue;
+        }
         foreach(QStandardItem *item, selected_ranges.at(i)) {
-            QList<QStandardItem *> row_items = parent_item->takeRow(item->row());
+            if (!item || item->parent() != parent_item) {
+                qWarning() << "EditTOC::MoveRight: stale item while moving";
+                continue;
+            }
+            const int item_row = item->row();
+            if (item_row < 0 || item_row >= parent_item->rowCount()) {
+                qWarning() << "EditTOC::MoveRight: row out of range" << item_row;
+                continue;
+            }
+            QList<QStandardItem *> row_items = parent_item->takeRow(item_row);
             new_parent->insertRow(new_parent->rowCount(), row_items);
         }
     }
@@ -335,7 +421,15 @@ void EditTOC::MoveUp()
     }
     QList<QStandardItem *> chosen_items;
     foreach(const QModelIndex &index, chosen_indexes) {
-        chosen_items << m_TableOfContents->itemFromIndex(index);
+        QStandardItem *item = m_TableOfContents->itemFromIndex(index);
+        if (!item) {
+            qWarning() << "EditTOC::MoveUp: null item for selected index";
+            continue;
+        }
+        chosen_items << item;
+    }
+    if (chosen_items.isEmpty()) {
+        return;
     }
     std::stable_sort(chosen_items.begin(), chosen_items.end(),
                      [](QStandardItem *left, QStandardItem *right) {
@@ -354,7 +448,7 @@ void EditTOC::MoveUp()
         }
 
         int item_row = item->row();
-        if (item_row == 0) {
+        if (item_row <= 0 || item_row >= parent_item->rowCount()) {
             continue;
         }
         if (chosen_items.contains(parent_item->child(item_row - 1, 0))) {
@@ -376,7 +470,15 @@ void EditTOC::MoveDown()
     }
     QList<QStandardItem *> chosen_items;
     foreach(const QModelIndex &index, chosen_indexes) {
-        chosen_items << m_TableOfContents->itemFromIndex(index);
+        QStandardItem *item = m_TableOfContents->itemFromIndex(index);
+        if (!item) {
+            qWarning() << "EditTOC::MoveDown: null item for selected index";
+            continue;
+        }
+        chosen_items << item;
+    }
+    if (chosen_items.isEmpty()) {
+        return;
     }
     std::stable_sort(chosen_items.begin(), chosen_items.end(),
                      [](QStandardItem *left, QStandardItem *right) {
@@ -396,7 +498,7 @@ void EditTOC::MoveDown()
         }
 
         int item_row = item->row();
-        if (item_row == parent_item->rowCount() - 1) {
+        if (item_row < 0 || item_row >= parent_item->rowCount() - 1) {
             continue;
         }
         if (chosen_items.contains(parent_item->child(item_row + 1, 0))) {
@@ -428,6 +530,10 @@ void EditTOC::AddEntry(bool above)
     }
 
     QStandardItem *item = m_TableOfContents->itemFromIndex(index);
+    if (!item) {
+        qWarning() << "EditTOC::AddEntry: null item for selected index";
+        return;
+    }
 
     QStandardItem *parent_item = item->parent();
     if (!parent_item) {
@@ -530,11 +636,20 @@ void EditTOC::DeleteEntry()
                 continue;
             }
             QStandardItem *item = m_TableOfContents->itemFromIndex(idx);
+            if (!item) {
+                qWarning() << "EditTOC::DeleteEntry: item vanished before delete";
+                continue;
+            }
             QStandardItem *parent_item = item->parent();
             if (!parent_item) {
                 parent_item = m_TableOfContents->invisibleRootItem();
             }
-            qDeleteAll(parent_item->takeRow(item->row()));
+            const int item_row = item->row();
+            if (item_row < 0 || item_row >= parent_item->rowCount()) {
+                qWarning() << "EditTOC::DeleteEntry: row out of range" << item_row;
+                continue;
+            }
+            qDeleteAll(parent_item->takeRow(item_row));
         }
     }
 
@@ -561,6 +676,10 @@ void EditTOC::SelectTarget()
     }
 
     QStandardItem *item = m_TableOfContents->itemFromIndex(index);
+    if (!item) {
+        qWarning() << "EditTOC::SelectTarget: null item for selected index";
+        return;
+    }
     // convert bookpath (epub root relative href) to relative to ncx or nav as appropriate
     QString ahref = item->text();
     if (ahref.indexOf(':') == -1) {
@@ -719,7 +838,10 @@ void EditTOC::BuildModel(const TOCModel::TOCEntry &root_entry)
 
 void EditTOC::AddEntryToParentItem(const TOCModel::TOCEntry &entry, QStandardItem *parent, int level)
 {
-    Q_ASSERT(parent);
+    if (!parent) {
+        qWarning() << "EditTOC::AddEntryToParentItem: null parent at level" << level;
+        return;
+    }
     QStandardItem *entry_item = new QStandardItem(entry.text);
     QStandardItem *target_item = new QStandardItem(entry.target);
 

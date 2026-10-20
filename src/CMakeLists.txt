@@ -333,6 +333,10 @@ set( MISC_FILES
     Misc/URLSchemeHandler.h
     Misc/Utility.cpp
     Misc/Utility.h
+    Misc/ZipEntryIO.cpp
+    Misc/ZipEntryIO.h
+    Misc/ZipExtractionLimits.cpp
+    Misc/ZipExtractionLimits.h
     Misc/SleepFunctions.h
     Misc/FindReplaceQLineEdit.cpp
     Misc/FindReplaceQLineEdit.h
@@ -482,6 +486,8 @@ set( MAINUI_FILES
     MainUI/BookBrowserTreeView.h
     MainUI/ClipsWindow.cpp
     MainUI/ClipsWindow.h
+    MainUI/CSSWindow.cpp
+    MainUI/CSSWindow.h
     MainUI/PreviewWindow.cpp
     MainUI/PreviewWindow.h
     MainUI/TableOfContents.cpp

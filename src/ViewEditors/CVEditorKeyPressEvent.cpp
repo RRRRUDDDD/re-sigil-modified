@@ -8,6 +8,8 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QKeySequence>
+#include <QScrollBar>
+#include <QDebug>
 #include "ViewEditors/CodeViewEditor.h"
 #include "BookManipulation/Book.h"
 #include "BookManipulation/FolderKeeper.h"
@@ -35,14 +37,39 @@ inline void CodeViewEditor::insertTextAtCursor(QString text, QTextCursor cursor)
 void CodeViewEditor::keyPressEvent(QKeyEvent* event)
 {
     MainWindow *main_window = qobject_cast<MainWindow *>(window());
-    if (main_window && event->matches(QKeySequence::Undo)) {
+    if (main_window && m_RouteUndoToMainWindow && event->matches(QKeySequence::Undo)) {
         QMetaObject::invokeMethod(main_window, "UndoAction", Qt::DirectConnection);
         event->accept();
         return;
     }
-    if (main_window && event->matches(QKeySequence::Redo)) {
+    if (main_window && m_RouteUndoToMainWindow && event->matches(QKeySequence::Redo)) {
         QMetaObject::invokeMethod(main_window, "RedoAction", Qt::DirectConnection);
         event->accept();
+        return;
+    }
+
+    if (event->matches(QKeySequence::Cut)) {
+        const QTextCursor before_cursor = textCursor();
+        const int before_position = before_cursor.position();
+        const bool had_selection = before_cursor.hasSelection();
+        const int selection_start = had_selection ? before_cursor.selectionStart() : -1;
+        const int before_scroll = verticalScrollBar()->value();
+
+        if (m_completeParser->isVisible()) {
+            m_completeParser->hide();
+        }
+
+        QPlainTextEdit::keyPressEvent(event);
+
+        // Only correct the clearly anomalous "jumped to document start" case.
+        const int expected = had_selection ? selection_start : before_position;
+        if (expected > 0 && textCursor().position() == 0) {
+            qWarning() << "Ctrl+X moved the caret to document start; restoring to" << expected;
+            QTextCursor restored = textCursor();
+            restored.setPosition(qMin(expected, document()->characterCount() - 1));
+            setTextCursor(restored);
+            verticalScrollBar()->setValue(before_scroll);
+        }
         return;
     }
 

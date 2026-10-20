@@ -55,6 +55,7 @@ FindReplaceQLineEdit::~FindReplaceQLineEdit()
 void FindReplaceQLineEdit::contextMenuEvent(QContextMenuEvent *event)
 {
     QPointer<QMenu> menu = createStandardContextMenu();
+    Utility::LocalizeStandardTextActions(menu);
     QAction *topAction = 0;
 
     if (!menu->actions().isEmpty()) {

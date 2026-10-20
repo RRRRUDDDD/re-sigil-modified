@@ -35,6 +35,7 @@
 #include <QMessageBox>
 #include <QCompleter>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QDebug>
 
 #include "Dialogs/DryRunReplace.h"
@@ -95,7 +96,8 @@ FindReplace::FindReplace(MainWindow *main_window)
       m_MinimalMatchCheckAction(nullptr),
       m_AutoTokeniseCheckAction(nullptr),
       m_menu(nullptr),
-      m_CF_RestartFlag(false) // 修改：循环查找 BUG
+      m_CF_RestartFlag(false), // 修改：循环查找 BUG
+      m_UiSearchRunning(false)
 {
     ui.setupUi(this);
     FindReplaceQLineEdit *find_ledit = new FindReplaceQLineEdit(this);
@@ -217,6 +219,9 @@ bool FindReplace::isSearchXML()
     if (isWhereCSS()) return false;
     if (isWhereCF() || m_LookWhereCurrentFile) {
         Resource * current_resource = GetCurrentResource();
+        if (!current_resource) {
+            return false;
+        }
         QString mt = current_resource->GetMediaType();
         if (mt.endsWith("+xml")) return true;
     }
@@ -359,6 +364,11 @@ void FindReplace::ResetKeyModifiers()
 
 void FindReplace::FindClicked()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant Find";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
     SetKeyModifiers();
     Find();
     ResetKeyModifiers();
@@ -367,6 +377,11 @@ void FindReplace::FindClicked()
 void FindReplace::ReplaceClicked()
 {
     // This is really ReplaceFind";
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant Replace";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
     SetKeyModifiers();
     Replace();
     ResetKeyModifiers();
@@ -374,6 +389,11 @@ void FindReplace::ReplaceClicked()
 
 void FindReplace::ReplaceAllClicked()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant Replace All";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
     SetKeyModifiers();
     if (m_ShiftUsed) {
         ChooseReplacements();
@@ -385,6 +405,11 @@ void FindReplace::ReplaceAllClicked()
 
 void FindReplace::CountClicked()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant Count";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
     SetKeyModifiers();
     if (m_ShiftUsed) {
         PerformDryRunReplace();
@@ -630,10 +655,16 @@ bool FindReplace::ReplaceCurrent()
 // Builds a Find All table
 void FindReplace::PerformDryRunReplace()
 {
+    ContentTab *current_tab = m_MainWindow->GetCurrentContentTab();
+    if (!current_tab) {
+        qWarning() << "FindReplace: no current tab for dry run";
+        return;
+    }
+
     if (m_DryRunRunning) return;
     m_DryRunRunning = true;
 
-    m_MainWindow->GetCurrentContentTab()->SaveTabContent();
+    current_tab->SaveTabContent();
 
     if (IsNewSearch()) {
         SetStartingResource(true);
@@ -654,7 +685,12 @@ void FindReplace::PerformDryRunReplace()
 // Allows you to delete unwanted replacements and apply those remaining
 void FindReplace::ChooseReplacements()
 {
-    m_MainWindow->GetCurrentContentTab()->SaveTabContent();
+    ContentTab *current_tab = m_MainWindow->GetCurrentContentTab();
+    if (!current_tab) {
+        qWarning() << "FindReplace: no current tab for Choose Replacements";
+        return;
+    }
+    current_tab->SaveTabContent();
     ShowMessage(tr("Choose Replacements"));
 
     if (IsNewSearch()) {
@@ -686,7 +722,10 @@ void FindReplace::ChooseReplacements()
         }
         // Signal that the contents have changed and update the view
         m_MainWindow->GetCurrentBook()->SetModified(true);
-        m_MainWindow->GetCurrentContentTab()->ContentChangedExternally();
+        ContentTab *tab = m_MainWindow->GetCurrentContentTab();
+        if (tab) {
+            tab->ContentChangedExternally();
+        }
     }
 
     UpdatePreviousFindStrings();
@@ -698,7 +737,12 @@ void FindReplace::ChooseReplacements()
 // replacement text in the entire document.
 int FindReplace::ReplaceAll()
 {
-    m_MainWindow->GetCurrentContentTab()->SaveTabContent();
+    ContentTab *current_tab = m_MainWindow->GetCurrentContentTab();
+    if (!current_tab) {
+        qWarning() << "FindReplace: no current tab for Replace All";
+        return 0;
+    }
+    current_tab->SaveTabContent();
     clearMessage();
 
     if (IsNewSearch()) {
@@ -745,7 +789,10 @@ int FindReplace::ReplaceAll()
     if (count > 0) {
         // Signal that the contents have changed and update the view
         m_MainWindow->GetCurrentBook()->SetModified(true);
-        m_MainWindow->GetCurrentContentTab()->ContentChangedExternally();
+        ContentTab *tab = m_MainWindow->GetCurrentContentTab();
+        if (tab) {
+            tab->ContentChangedExternally();
+        }
     }
 
     UpdatePreviousFindStrings();
@@ -1020,7 +1067,10 @@ QList<Resource*> FindReplace::GetAllResourcesToSearch()
     QList<Resource *> resources;
 
     if (isWhereCF() || m_LookWhereCurrentFile) {
-        resources << GetCurrentResource();
+        Resource *current_resource = GetCurrentResource();
+        if (current_resource) {
+            resources << current_resource;
+        }
     } else {
         resources = GetFilesToSearch(true);
     }
@@ -1153,7 +1203,12 @@ QList <Resource *> FindReplace::GetFilesToSearch(bool force_all)
 
 int FindReplace::CountInFiles()
 {
-    m_MainWindow->GetCurrentContentTab()->SaveTabContent();
+    ContentTab *current_tab = m_MainWindow->GetCurrentContentTab();
+    if (!current_tab) {
+        qWarning() << "FindReplace: no current tab for Count";
+        return 0;
+    }
+    current_tab->SaveTabContent();
 
     QList<Resource *>search_files = GetFilesToSearch(true);
     if (search_files.isEmpty()) return 0;
@@ -1169,7 +1224,12 @@ int FindReplace::CountInFiles()
 
 int FindReplace::ReplaceInAllFiles()
 {
-    m_MainWindow->GetCurrentContentTab()->SaveTabContent();
+    ContentTab *current_tab = m_MainWindow->GetCurrentContentTab();
+    if (!current_tab) {
+        qWarning() << "FindReplace: no current tab for Replace All";
+        return 0;
+    }
+    current_tab->SaveTabContent();
     QList<Resource *>search_files = GetFilesToSearch(true);
     if (search_files.isEmpty()) return 0;
 
@@ -1264,7 +1324,9 @@ bool FindReplace::FindInAllFiles(Searchable::Direction direction)
         // ---------------------------修改：循环查找 BUG，跨文件查找时循环匹配----------------------------
         else if (m_OptionWrap && containing_resource == current_resource) {
             m_InRemainder = false;
-            found = searchable->FindNext(GetSearchRegex(), direction, m_SpellCheck, true, false);
+            if (searchable) {
+                found = searchable->FindNext(GetSearchRegex(), direction, m_SpellCheck, true, false);
+            }
         }
         // ------------------------------------------------------------------------------------------------
 
@@ -1287,14 +1349,16 @@ Resource *FindReplace::GetNextContainingResource(Searchable::Direction direction
     bool need_to_check_assigned_starting_resource = false;
     
     // if CurrentFile is the same type as LookWhere, set it as the starting resource
-    if (isWhereHTML() && (current_resource->Type() == Resource::HTMLResourceType)) {
-        starting_resource = current_resource;
-    } else if (isWhereCSS() && (current_resource->Type() == Resource::CSSResourceType)) {
-        starting_resource = current_resource;
-    } else if (isWhereOPF() && (current_resource->Type() == Resource::OPFResourceType)) {
-        starting_resource = current_resource;
-    } else if (isWhereNCX() && (current_resource->Type() == Resource::NCXResourceType)) {
-        starting_resource = current_resource;
+    if (current_resource) {
+        if (isWhereHTML() && (current_resource->Type() == Resource::HTMLResourceType)) {
+            starting_resource = current_resource;
+        } else if (isWhereCSS() && (current_resource->Type() == Resource::CSSResourceType)) {
+            starting_resource = current_resource;
+        } else if (isWhereOPF() && (current_resource->Type() == Resource::OPFResourceType)) {
+            starting_resource = current_resource;
+        } else if (isWhereNCX() && (current_resource->Type() == Resource::NCXResourceType)) {
+            starting_resource = current_resource;
+        }
     }
 
     QList<Resource *> resources = GetFilesToSearch();
@@ -1438,7 +1502,12 @@ Resource *FindReplace::GetNextResource(Resource *current_resource, Searchable::D
 
 Resource *FindReplace::GetCurrentResource()
 {
-    return m_MainWindow->GetCurrentContentTab()->GetLoadedResource();
+    ContentTab *tab = m_MainWindow->GetCurrentContentTab();
+    if (!tab) {
+        qWarning() << "FindReplace: no current content tab";
+        return nullptr;
+    }
+    return tab->GetLoadedResource();
 }
 
 
@@ -1743,7 +1812,14 @@ void FindReplace::WriteSettings()
 
 Searchable *FindReplace::GetAvailableSearchable()
 {
-    Searchable *searchable = m_MainWindow->GetCurrentContentTab()->GetSearchableContent();
+    ContentTab *tab = m_MainWindow->GetCurrentContentTab();
+    if (!tab) {
+        qWarning() << "FindReplace: no current content tab for search";
+        ShowMessage(tr("This tab cannot be searched"));
+        return nullptr;
+    }
+
+    Searchable *searchable = tab->GetSearchableContent();
 
     if (!searchable) {
         ShowMessage(tr("This tab cannot be searched"));
@@ -1852,13 +1928,22 @@ void FindReplace::SetStartingResource(bool update_position)
     m_StartingPos = -1;
     m_InRemainder = false;
     if (m_StartingResource == current_resource) {
-        m_StartingPos = m_MainWindow->GetCurrentContentTab()->GetCursorPosition();
+        ContentTab *current_tab = m_MainWindow->GetCurrentContentTab();
+        if (current_tab) {
+            m_StartingPos = current_tab->GetCursorPosition();
+        }
     }
 }
 
 // These are *Search methods are invoked by the SearchEditor
 void FindReplace::FindSearch()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant search-editor Find";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
+
     // these entries are owned by the Search Editor who will clean up as needed
     QList<SearchEditorModel::searchEntry*> search_entries = m_MainWindow->SearchEditorGetCurrentEntries();
 
@@ -1883,6 +1968,12 @@ void FindReplace::FindSearch()
 
 void FindReplace::ReplaceCurrentSearch()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant search-editor Replace";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
+
     // these entries are owned by the Search Editor who will clean up as needed
     QList<SearchEditorModel::searchEntry*> search_entries = m_MainWindow->SearchEditorGetCurrentEntries();
 
@@ -1891,27 +1982,39 @@ void FindReplace::ReplaceCurrentSearch()
         return;
     }
 
+    SetKeyModifiers();
     m_IsSearchGroupRunning = true;
-    
-#if 0
-    foreach(SearchEditorModel::searchEntry * search_entry, search_entries) {
-        LoadSearch(search_entry);
-        if (ReplaceCurrent()) {
-            break;
-        } else {
-            m_MainWindow->SearchEditorRecordEntryAsCompleted(search_entry);
-        }
-    }
-#else
+
     SearchEditorModel::searchEntry * search_entry = search_entries.first();
     LoadSearch(search_entry);
-    ReplaceCurrent();
-#endif
+
+    bool replaced = ReplaceCurrent();
+    if (!replaced) {
+        // No match is selected yet when replace is requested from the search editor.
+        if (Find()) {
+            replaced = ReplaceCurrent();
+        }
+    }
+
     m_IsSearchGroupRunning = false;
+
+    if (!replaced) {
+        CannotFindSearchTerm();
+    } else {
+        ShowMessage(tr("Replacements made: %n", "", 1));
+    }
+
+    ResetKeyModifiers();
 }
 
 void FindReplace::ReplaceSearch()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant search-editor Replace/Find";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
+
     // these entries are owned by the Search Editor who will clean up as needed
     QList<SearchEditorModel::searchEntry*> search_entries = m_MainWindow->SearchEditorGetCurrentEntries();
 
@@ -1937,6 +2040,12 @@ void FindReplace::ReplaceSearch()
 
 void FindReplace::CountAllSearch()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant search-editor Count";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
+
     // these entries are owned by the Search Editor who will clean up as needed
     QList<SearchEditorModel::searchEntry*> search_entries = m_MainWindow->SearchEditorGetCurrentEntries();
 
@@ -1981,6 +2090,12 @@ void FindReplace::CountsReportCount(SearchEditorModel::searchEntry* entry, int& 
 
 void FindReplace::ReplaceAllSearch()
 {
+    if (m_UiSearchRunning) {
+        qWarning() << "FindReplace: ignoring re-entrant search-editor Replace All";
+        return;
+    }
+    QScopedValueRollback<bool> ui_search_guard(m_UiSearchRunning, true);
+
     // these entries are owned by the Search Editor who will clean up as needed
     QList<SearchEditorModel::searchEntry*> search_entries = m_MainWindow->SearchEditorGetCurrentEntries();
 
@@ -2011,7 +2126,7 @@ void FindReplace::ReplaceAllSearch()
         rule.replacement = GetReplace();
 
         // Get target files
-        QList<Resource*> targetResources = GetFilesToSearch(true);
+        QList<Resource*> targetResources = GetAllResourcesToSearch();
         for (Resource* res : targetResources) {
             TextResource* textRes = qobject_cast<TextResource*>(res);
             if (textRes) {

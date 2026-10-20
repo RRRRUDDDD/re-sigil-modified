@@ -1,9 +1,9 @@
-name: Build Sigil 1.9.30.X5C
+name: Build Sigil 1.9.30.X5D
 
 "on":
   push:
     branches: [main]
-    tags: ["v1.9.30.X5C"]
+    tags: ["v1.9.30.X5D"]
   pull_request:
   workflow_dispatch:
 
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  SIGIL_VERSION: 1.9.30.X5C
+  SIGIL_VERSION: 1.9.30.X5D
 
 concurrency:
   group: build-${{ github.workflow }}-${{ github.ref }}
@@ -98,12 +98,12 @@ jobs:
         run: |
           $iss = "build\Sigil_configured.iss"
           $content = Get-Content $iss -Raw
-          if ($content -notmatch '(?m)^VersionInfoVersion=1\.9\.30\.X5C\r?$') {
-            throw "Expected X5C VersionInfoVersion was not found"
+          if ($content -notmatch '(?m)^VersionInfoVersion=1\.9\.30\.X5D\r?$') {
+            throw "Expected X5D VersionInfoVersion was not found"
           }
           $content = $content -replace `
-            '(?m)^VersionInfoVersion=1\.9\.30\.X5C\r?$', `
-            'VersionInfoVersion=1.9.30.53'
+            '(?m)^VersionInfoVersion=1\.9\.30\.X5D\r?$', `
+            'VersionInfoVersion=1.9.30.54'
           [IO.File]::WriteAllText(
             (Resolve-Path $iss),
             $content,
@@ -125,8 +125,8 @@ jobs:
       - name: Upload compiled package
         uses: actions/upload-artifact@v6
         with:
-          name: Sigil-1.9.30.X5C-windows-x64
-          path: build/installer/Sigil-1.9.30.X5C-Windows-x64-Setup.exe
+          name: Sigil-1.9.30.X5D-windows-x64
+          path: build/installer/Sigil-1.9.30.X5D-Windows-x64-Setup.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -211,12 +211,12 @@ jobs:
         run: |
           $iss = "build\Sigil_configured.iss"
           $content = Get-Content $iss -Raw
-          if ($content -notmatch '(?m)^VersionInfoVersion=1\.9\.30\.X5C\r?$') {
-            throw "Expected X5C VersionInfoVersion was not found"
+          if ($content -notmatch '(?m)^VersionInfoVersion=1\.9\.30\.X5D\r?$') {
+            throw "Expected X5D VersionInfoVersion was not found"
           }
           $content = $content -replace `
-            '(?m)^VersionInfoVersion=1\.9\.30\.X5C\r?$', `
-            'VersionInfoVersion=1.9.30.53'
+            '(?m)^VersionInfoVersion=1\.9\.30\.X5D\r?$', `
+            'VersionInfoVersion=1.9.30.54'
           [IO.File]::WriteAllText(
             (Resolve-Path $iss),
             $content,
@@ -240,8 +240,8 @@ jobs:
       - name: Upload compiled package
         uses: actions/upload-artifact@v6
         with:
-          name: Sigil-1.9.30.X5C-windows-x86
-          path: build/installer/Sigil-1.9.30.X5C-Windows-x86-Setup.exe
+          name: Sigil-1.9.30.X5D-windows-x86
+          path: build/installer/Sigil-1.9.30.X5D-Windows-x86-Setup.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -317,8 +317,8 @@ jobs:
       - name: Upload compiled package
         uses: actions/upload-artifact@v6
         with:
-          name: Sigil-1.9.30.X5C-macos-x86_64
-          path: Sigil-1.9.30.X5C-macos-x86_64.dmg
+          name: Sigil-1.9.30.X5D-macos-x86_64
+          path: Sigil-1.9.30.X5D-macos-x86_64.dmg
           if-no-files-found: error
           retention-days: 14
 
@@ -396,8 +396,8 @@ jobs:
       - name: Upload compiled package
         uses: actions/upload-artifact@v6
         with:
-          name: Sigil-1.9.30.X5C-macos-arm64
-          path: Sigil-1.9.30.X5C-macos-arm64.dmg
+          name: Sigil-1.9.30.X5D-macos-arm64
+          path: Sigil-1.9.30.X5D-macos-arm64.dmg
           if-no-files-found: error
           retention-days: 14
 

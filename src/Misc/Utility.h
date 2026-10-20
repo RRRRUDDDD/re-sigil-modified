@@ -32,6 +32,8 @@
 #include <QSet>
 #include <QStringList>
 
+#include "Misc/ZipExtractionLimits.h"
+
 class QStringRef;
 class QWidget;
 class QMenu;
@@ -58,6 +60,10 @@ public:
     };
 
     static QString ChangeCase(const QString &text, const Casing &casing);
+
+    // Replaces the untranslated labels of Qt's standard text-control
+    // context-menu actions (Undo/Redo/Cut/Copy/Paste/Delete/Select All).
+    static void LocalizeStandardTextActions(QMenu *menu);
 
     // Define the user preferences location to be used
     static QString DefinePrefsDir();
@@ -98,6 +104,10 @@ public:
     // the characters included are in the interval:
     // [ start_index, end_index >
     static QStringRef SubstringRef(int start_index, int end_index, const QString &string);
+
+    // Returns the offset one Unicode code point past offset, so that a UTF-16
+    // surrogate pair is never split in half.
+    static int NextCodePointOffset(const QString &string, int offset);
 
     // Replace the first occurrence of string "before"
     // with string "after" in string "string"
@@ -170,6 +180,26 @@ public:
      */
     static QString URLDecodePath(const QString &path);
 
+    /**
+     * Resolves and validates a path against an allowed root directory.
+     * Relative paths are URL-decoded and resolved from base_path. Absolute
+     * candidates are only accepted when path_is_absolute is true. Existing
+     * paths are checked canonically so links cannot escape the allowed root.
+     *
+     * @param root_path The only directory the result may be in.
+     * @param base_path The directory relative paths are resolved from.
+     * @param path The EPUB-relative path or absolute candidate to validate.
+     * @param resolved_path Receives the normalized, safe absolute path.
+     * @param error_message Receives a diagnostic when validation fails.
+     * @param path_is_absolute Whether path is already an absolute candidate.
+     */
+    static bool ResolvePathWithinRoot(const QString &root_path,
+                                      const QString &base_path,
+                                      const QString &path,
+                                      QString *resolved_path,
+                                      QString *error_message = NULL,
+                                      bool path_is_absolute = false);
+
     static void DisplayStdErrorDialog(const QString &error_message, const QString &detailed_text = QString());
 
     static void DisplayStdWarningDialog(const QString &warning_message, const QString &detailed_text = QString());
@@ -196,7 +226,10 @@ public:
 #endif
 
     static bool UnZip(const QString &zippath, const QString &destdir);
-    static QStringList ZipInspect(const QString &zippath);
+    static bool UnZip(const QString &zippath, const QString &destdir,
+                      const ZipExtractionLimits &limits);
+    static QStringList ZipInspect(const QString &zippath,
+                                  bool *resource_limit_exceeded = NULL);
 
     // Generate relative path to destination from starting directory path
     // Both paths should be absolute and preferably cannonical

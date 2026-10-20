@@ -67,6 +67,7 @@ class BookBrowser;
 class TableOfContents;
 class ValidationResultsView;
 class PreviewWindow;
+class CSSWindow;
 class SearchEditor;
 class ClipEditor;
 class ClipsWindow;
@@ -558,6 +559,7 @@ private slots:
 
     void UpdatePreviewRequest();
     void UpdatePreviewCSSRequest();
+    void CSSWindowSaved();
     void ScrollPreview();
     void UpdatePreview();
     void InspectHTML();
@@ -1012,6 +1014,11 @@ private:
     ValidationResultsView *m_ValidationResultsView;
 
     PreviewWindow *m_PreviewWindow;
+
+    /**
+     * The dockable CSS editor.
+     */
+    CSSWindow *m_CSSWindow;
 
     /**
      * The lable that displays the cursor position.

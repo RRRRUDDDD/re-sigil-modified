@@ -82,7 +82,6 @@ const int PROGRESS_BAR_MINIMUM_DURATION = 1000;
 const QString BREAK_TAG_INSERT    = "<hr class=\"sigil_split_marker\" />";
 
 static const int TAB_SPACES_WIDTH        = 4;
-static const int LINE_NUMBER_MARGIN      = 5;
 
 static const QString XML_OPENING_TAG        = "(<[^>/][^>]*[^>/]>|<[^>/]>)";
 static const QString NEXT_CLOSE_TAG_LOCATION = "</\\s*[^>]+>";
@@ -111,6 +110,7 @@ CodeViewEditor::CodeViewEditor(HighlighterType high_type, bool check_spelling, Q
     m_DelayedCursorScreenCenteringRequired(false),
     m_CaretUpdate(QList<ElementIndex>()),
     m_checkSpelling(check_spelling),
+    m_RouteUndoToMainWindow(true),
     m_reformatCSSEnabled(false),
     m_reformatHTMLEnabled(false),
     m_lastFindRegex(QString()),
@@ -181,10 +181,12 @@ QSize CodeViewEditor::sizeHint() const
 }
 
 
-void CodeViewEditor::CustomSetDocument(TextDocument &ndocument)
+void CodeViewEditor::CustomSetDocument(TextDocument &ndocument, bool reset_modified)
 {
     setDocument(&ndocument);
-    ndocument.setModified(false);
+    if (reset_modified) {
+        ndocument.setModified(false);
+    }
     if (m_Highlighter) {
         m_Highlighter->setDocument(&ndocument);
         // The QSyntaxHighlighter will setup a singleShot timer to do the highlighting
@@ -617,7 +619,7 @@ void CodeViewEditor::LineNumberAreaPaintEvent(QPaintEvent *event)
         // Draw the number in the line number area.
         painter.setPen(m_codeViewAppearance.line_number_foreground_color);
         QString number_to_paint = QString::number(blockNumber);
-        painter.drawText(- LINE_NUMBER_MARGIN,
+        painter.drawText(- m_LineNumberMargin,
                          topY,
                          m_LineNumberArea->width(),
                          fontMetrics().height(),
@@ -691,9 +693,9 @@ int CodeViewEditor::CalculateLineNumberAreaWidth()
     }
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
-    return LINE_NUMBER_MARGIN * 2 + fontMetrics().horizontalAdvance(QChar('0')) * num_digits;
+    return m_LineNumberMargin * 2 + fontMetrics().horizontalAdvance(QChar('0')) * num_digits;
 #else
-    return LINE_NUMBER_MARGIN * 2 + fontMetrics().width(QChar('0')) * num_digits;
+    return m_LineNumberMargin * 2 + fontMetrics().width(QChar('0')) * num_digits;
 #endif
 
 }
@@ -851,10 +853,27 @@ float CodeViewEditor::GetZoomFactor() const
 }
 
 
+void CodeViewEditor::SetFontPointSizeAdjustment(float delta)
+{
+    m_FontPointSizeAdjustment = delta;
+    Zoom();
+}
+
+
+void CodeViewEditor::SetLineNumberMargin(int margin)
+{
+    m_LineNumberMargin = qMax(0, margin);
+    m_LineNumberArea->MyUpdateGeometry();
+    UpdateLineNumberAreaMargin();
+}
+
+
 void CodeViewEditor::Zoom()
 {
     QFont current_font = font();
-    current_font.setPointSizeF(m_codeViewAppearance.font_size * m_CurrentZoomFactor);
+    const qreal size = m_codeViewAppearance.font_size * m_CurrentZoomFactor
+                       + m_FontPointSizeAdjustment;
+    current_font.setPointSizeF(qMax<qreal>(1.0, size));
     setFont(current_font);
     UpdateLineNumberAreaFont(current_font);
 }
@@ -892,6 +911,28 @@ SPCRE::MatchInfo CodeViewEditor::GetMisspelledWord(const QString &text, int star
     }
 
     return match_info;
+}
+
+// The last match in text that is not a zero width match sitting right at the
+// end of it.  Searching upwards from a zero width match would otherwise report
+// that same match again, because the search window still ends there.  The
+// window cannot simply be shortened instead: that would skip a non-empty match
+// which happens to end at the very same offset.
+static SPCRE::MatchInfo GetLastMatchBeforeWindowEnd(SPCRE *spcre, const QString &text)
+{
+    const QList<SPCRE::MatchInfo> matches = spcre->getEveryMatchInfo(text);
+
+    for (int i = matches.count() - 1; i >= 0; i--) {
+        const SPCRE::MatchInfo &candidate = matches.at(i);
+        const bool empty_at_window_end = candidate.offset.first == candidate.offset.second &&
+                                         candidate.offset.first == text.length();
+
+        if (!empty_at_window_end) {
+            return candidate;
+        }
+    }
+
+    return SPCRE::MatchInfo();
 }
 
 bool CodeViewEditor::FindNext(const QString &search_regex,
@@ -939,9 +980,22 @@ bool CodeViewEditor::FindNext(const QString &search_regex,
 
     int selection_offset = GetSelectionOffset(search_direction, ignore_selection_offset, marked_text);
 
+    // A zero width match ("^", "$", "\b", a lookaround) leaves an empty
+    // selection, so the next search starts at the very offset it was found at
+    // and would keep reporting it forever.  When that is what just happened,
+    // step past it instead of standing still.
+    const bool repeating_zero_width_match =
+        !ignore_selection_offset && !misspelled_words &&
+        search_regex == m_lastFindRegex &&
+        m_lastMatch.offset.first != -1 &&
+        m_lastMatch.offset.first == m_lastMatch.offset.second &&
+        m_lastMatch.offset.first == selection_offset;
+
     if (search_direction == Searchable::Direction_Up) {
         if (misspelled_words) {
             match_info = GetMisspelledWord(txt, 0, selection_offset, search_regex, search_direction);
+        } else if (repeating_zero_width_match) {
+            match_info = GetLastMatchBeforeWindowEnd(spcre, Utility::Substring(start, selection_offset, txt));
         } else {
             match_info = spcre->getLastMatchInfo(Utility::Substring(start, selection_offset, txt));
         }
@@ -949,7 +1003,12 @@ bool CodeViewEditor::FindNext(const QString &search_regex,
         if (misspelled_words) {
             match_info = GetMisspelledWord(txt, selection_offset, txt.count(), search_regex, search_direction);
         } else {
-            match_info = spcre->getFirstMatchInfo(Utility::Substring(selection_offset, end, txt));
+            if (repeating_zero_width_match) {
+                selection_offset = Utility::NextCodePointOffset(txt, selection_offset);
+            }
+            if (selection_offset <= end) {
+                match_info = spcre->getFirstMatchInfo(Utility::Substring(selection_offset, end, txt));
+            }
         }
         start_offset = selection_offset;
     }
@@ -1371,12 +1430,13 @@ void CodeViewEditor::contextMenuEvent(QContextMenuEvent *event)
     // parent during qmenu exec.  See discussion at:
     // https://www.qtcentre.org/threads/65046-closing-parent-widget-during-QMenu-exec()
     QPointer<QMenu> menu = createStandardContextMenu();
+    Utility::LocalizeStandardTextActions(menu);
 
     // The standard text-control actions operate on this document directly.
     // Replace only Undo/Redo so cross-file batch history uses MainWindow's
     // same route as the menu and toolbar actions.
     MainWindow *main_window = qobject_cast<MainWindow *>(window());
-    if (main_window && !menu.isNull()) {
+    if (main_window && m_RouteUndoToMainWindow && !menu.isNull()) {
         QAction *undo_action = nullptr;
         QAction *redo_action = nullptr;
         for (QAction *action : menu->actions()) {
@@ -2618,9 +2678,12 @@ bool CodeViewEditor::PasteClipEntry(ClipEditorModel::clipEntry *clip)
 void CodeViewEditor::ResetFont()
 {
     // Let's try to use our user specified value as our font (default Courier New)
-    QFont font(m_codeViewAppearance.font_family, m_codeViewAppearance.font_size);
+    QFont font(m_codeViewAppearance.font_family);
     // But just in case, say we want a fixed width font if font is not present
     font.setStyleHint(QFont::TypeWriter);
+    const qreal size = m_codeViewAppearance.font_size * m_CurrentZoomFactor
+                       + m_FontPointSizeAdjustment;
+    font.setPointSizeF(qMax<qreal>(1.0, size));
     setFont(font);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
     setTabStopDistance(TAB_SPACES_WIDTH * QFontMetrics(font).horizontalAdvance(' '));
@@ -3943,6 +4006,11 @@ bool CodeViewEditor::ReformatCSSEnabled()
 void CodeViewEditor::SetReformatCSSEnabled(bool value)
 {
     m_reformatCSSEnabled = value;
+}
+
+void CodeViewEditor::SetRouteUndoToMainWindow(bool route)
+{
+    m_RouteUndoToMainWindow = route;
 }
 
 bool CodeViewEditor::ReformatHTMLEnabled()

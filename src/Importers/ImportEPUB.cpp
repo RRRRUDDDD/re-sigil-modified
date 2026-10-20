@@ -30,7 +30,9 @@
 #include "iowin32.h"
 #endif
 
+#include <exception>
 #include <string>
+#include <tuple>
 
 #include <QApplication>
 #include <QtCore>
@@ -45,6 +47,7 @@
 #include <QRegularExpressionMatch>
 #include <QStringList>
 #include <QMessageBox>
+#include <QTemporaryDir>
 #include <QDateTime>
 #include <QDate>
 #include <QTime>
@@ -57,9 +60,9 @@
 #include "Misc/MediaTypes.h"
 #include "Misc/FontObfuscation.h"
 #include "Misc/HTMLEncodingResolver.h"
-#include "Misc/QCodePage437Codec.h"
 #include "Misc/SettingsStore.h"
 #include "Misc/Utility.h"
+#include "Misc/ZipEntryIO.h"
 #include "ResourceObjects/CSSResource.h"
 #include "ResourceObjects/HTMLResource.h"
 #include "ResourceObjects/OPFResource.h"
@@ -69,16 +72,8 @@
 #include "sigil_constants.h"
 #include "sigil_exception.h"
 
-#ifndef MAX_PATH
-// Set Max length to 256 because that's the max path size on many systems.
-#define MAX_PATH 256
-#endif
-// This is the same read buffer size used by Java and Perl.
-#define BUFF_SIZE 8192
-
 const QString DUBLIN_CORE_NS             = "http://purl.org/dc/elements/1.1/";
 static const QString OEBPS_MIMETYPE      = "application/oebps-package+xml";
-static const QString UPDATE_ERROR_STRING = "SG_ERROR";
 const QString NCX_MIMETYPE               = "application/x-dtbncx+xml";
 static const QString NCX_EXTENSION       = "ncx";
 const QString ADOBE_FONT_ALGO_ID         = "http://ns.adobe.com/pdf/enc#RC";
@@ -89,8 +84,6 @@ static const QString CONTAINER_XML       = "<?xml version=\"1.0\" encoding=\"UTF
         "        <rootfile full-path=\"%1\" media-type=\"application/oebps-package+xml\"/>\n"
         "   </rootfiles>\n"
         "</container>\n";
-
-static QCodePage437Codec *cp437 = 0;
 
 // Constructor;
 // The parameter is the file to be imported
@@ -103,6 +96,48 @@ ImportEPUB::ImportEPUB(const QString &fullfilepath)
 {
     // improve loading speed by unzipping directly into the FolderKeeper folder
     m_ExtractedFolderPath = m_Book->GetFolderKeeper()->GetFullPathToMainFolder();
+}
+
+
+QString ImportEPUB::ResolveEpubPath(const QString &base_path,
+                                    const QString &path,
+                                    const QString &context,
+                                    bool path_is_absolute) const
+{
+    QString resolved_path;
+    QString path_error;
+    if (!Utility::ResolvePathWithinRoot(m_ExtractedFolderPath, base_path, path,
+                                        &resolved_path, &path_error, path_is_absolute)) {
+        const QString error = QObject::tr("Invalid EPUB path for %1: \"%2\" (%3)")
+                              .arg(context, path, path_error);
+        throw EPUBLoadParseError(error.toStdString());
+    }
+    return resolved_path;
+}
+
+
+bool ImportEPUB::ResolveLocalEpubHref(const QString &base_path,
+                                      const QString &href,
+                                      const QString &context,
+                                      QString *resolved_path) const
+{
+    if (resolved_path) {
+        resolved_path->clear();
+    }
+
+    const QString decoded_href = Utility::URLDecodePath(href);
+    const bool forbidden_local_syntax = decoded_href.startsWith('/') ||
+                                        decoded_href.contains('\\') ||
+                                        QRegularExpression("^[A-Za-z]:").match(decoded_href).hasMatch();
+    if (!QUrl(decoded_href).isRelative() && !forbidden_local_syntax) {
+        return false;
+    }
+
+    const QString safe_path = ResolveEpubPath(base_path, href, context);
+    if (resolved_path) {
+        *resolved_path = safe_path;
+    }
+    return true;
 }
 
 // Reads and parses the file
@@ -156,7 +191,12 @@ QSharedPointer<Book> ImportEPUB::GetBook(bool extract_metadata)
         QApplication::setOverrideCursor(Qt::WaitCursor);
     }
 
-    LoadFolderStructure();
+    const FolderLoadResult folder_result = LoadFolderStructure();
+    if (!folder_result.success) {
+        const QString error = tr("The following EPUB resources could not be loaded:\n%1")
+                               .arg(folder_result.errors.join("\n"));
+        throw EPUBLoadParseError(error.toStdString());
+    }
 
     const QList<Resource *> resources = m_Book->GetFolderKeeper()->GetResourceList();
 
@@ -266,7 +306,9 @@ QSharedPointer<Book> ImportEPUB::GetBook(bool extract_metadata)
 
 QHash<QString, QString> ImportEPUB::ParseEncryptionXml()
 {
-    QString encryption_xml_path = m_ExtractedFolderPath + "/META-INF/encryption.xml";
+    QString encryption_xml_path = ResolveEpubPath(m_ExtractedFolderPath,
+                                                  "META-INF/encryption.xml",
+                                                  QObject::tr("encryption.xml"));
 
     if (!QFileInfo(encryption_xml_path).exists()) {
         return QHash<QString, QString>();
@@ -286,11 +328,14 @@ QHash<QString, QString> ImportEPUB::ParseEncryptionXml()
                 encryption_algo = encryption.attributes().value("", "Algorithm").toString();
             } else if (encryption.name().compare(QLatin1String("CipherReference")) == 0) {
                 // Note: fragments are not part of the CipherReference specs so this is okay
-                uri = Utility::URLDecodePath(encryption.attributes().value("", "URI").toString());
+                uri = encryption.attributes().value("", "URI").toString();
                 // hack to handle non-spec encryption file url relative to META-INF instead
                 // of being absolute from epub root as the spec calls for
                 if (uri.startsWith("../")) uri = uri.mid(3,-1);
-                encrypted_files[ uri ] = encryption_algo;
+                const QString encrypted_path = ResolveEpubPath(m_ExtractedFolderPath, uri,
+                                                               QObject::tr("encryption CipherReference URI"));
+                const QString book_path = QDir(m_ExtractedFolderPath).relativeFilePath(encrypted_path);
+                encrypted_files[ book_path ] = encryption_algo;
             }
         }
     }
@@ -336,11 +381,16 @@ void ImportEPUB::AddObfuscatedButUndeclaredFonts(const QHash<QString, QString> &
             continue;
         }
 
+        const QString absolute_path = ResolveEpubPath(m_ExtractedFolderPath,
+                                                      QDir(m_ExtractedFolderPath).absoluteFilePath(filepath),
+                                                      QObject::tr("encrypted font path"), true);
+        const QString opf_relative_path = opf_dir.relativeFilePath(absolute_path);
+
         // Only add the path to the manifest if it is not already included.
         QMapIterator<QString, QString> valueSearch(m_Files);
 
-        if (!valueSearch.findNext(opf_dir.relativeFilePath(filepath))) {
-            m_Files[ Utility::CreateUUID() ] = opf_dir.relativeFilePath(filepath);
+        if (!valueSearch.findNext(opf_relative_path)) {
+            m_Files[ Utility::CreateUUID() ] = opf_relative_path;
         }
     }
 }
@@ -353,7 +403,9 @@ void ImportEPUB::AddNonStandardAppleXML()
 {
     QDir opf_dir = QFileInfo(m_OPFFilePath).dir();
     QStringList aberrant_Apple_filenames;
-    aberrant_Apple_filenames.append(m_ExtractedFolderPath + "/META-INF/com.apple.ibooks.display-options.xml");
+    aberrant_Apple_filenames.append(ResolveEpubPath(m_ExtractedFolderPath,
+                                      "META-INF/com.apple.ibooks.display-options.xml",
+                                      QObject::tr("Apple display options file")));
 
     for (int i = 0; i < aberrant_Apple_filenames.size(); ++i) {
         if (QFile::exists(aberrant_Apple_filenames.at(i))) {
@@ -404,9 +456,6 @@ void ImportEPUB::ProcessFontFiles(const QList<Resource *> &resources,
 void ImportEPUB::ExtractContainer()
 {
     int res = 0;
-    if (!cp437) {
-        cp437 = new QCodePage437Codec();
-    }
 #ifdef Q_OS_WIN32
     zlib_filefunc64_def ffunc;
     fill_win32_filefunc64W(&ffunc);
@@ -419,90 +468,103 @@ void ImportEPUB::ExtractContainer()
         throw (EPUBLoadParseError(QString(QObject::tr("Cannot unzip EPUB: %1")).arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
     }
 
+    // Keep untrusted output isolated until every entry passes its metadata and
+    // streaming checks.  Failure removes only this temporary directory; the
+    // FolderKeeper destination is untouched until extraction fully succeeds.
+    QTemporaryDir staging_dir(QDir(m_ExtractedFolderPath).filePath(".sigil-epub-unzip-XXXXXX"));
+    if (!staging_dir.isValid()) {
+        unzClose(zfile);
+        throw (EPUBLoadParseError(QString(QObject::tr("Cannot create a temporary directory to unzip EPUB: %1"))
+                                  .arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
+    }
+    const QString extraction_path = staging_dir.path();
+    ZipExtractionResourceLimiter limiter(ZipExtractionLimits::Default());
+    // Output paths already produced by an earlier entry.  A second entry
+    // claiming one of them would overwrite a file that has already been
+    // inspected, so it is rejected instead.
+    QSet<QString> reserved_paths;
+
+    const auto throw_limit_error = [&](const QString &file_name, const std::string &reason) {
+        unzClose(zfile);
+        throw EPUBLoadParseError(QString(QObject::tr("Cannot extract file \"%1\": ZIP resource limit exceeded: %2"))
+                                 .arg(file_name, QString::fromStdString(reason)).toStdString());
+    };
+    const auto throw_extract_error = [&](const QString &file_name) {
+        unzClose(zfile);
+        throw EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(file_name).toStdString());
+    };
+
     res = unzGoToFirstFile(zfile);
 
     if (res == UNZ_OK) {
         do {
             // Get the name of the file in the archive.
-            char file_name[MAX_PATH] = {0};
-            unz_file_info64 file_info;
-            unzGetCurrentFileInfo64(zfile, &file_info, file_name, MAX_PATH, NULL, 0, NULL, 0);
-            QString qfile_name;
-            QString cp437_file_name;
-            qfile_name = QString::fromUtf8(file_name);
-            if (!(file_info.flag & (1<<11))) {
-                // General purpose bit 11 says the filename is utf-8 encoded. If not set then
-                // IBM 437 encoding might be used.
-                cp437_file_name = cp437->toUnicode(file_name);
+            ZipEntryInfo entry_info;
+            QString entry_error;
+            if (!ZipEntryIO::ReadCurrentEntry(zfile, &entry_info, &entry_error)) {
+                unzClose(zfile);
+                throw (EPUBLoadParseError(QString(QObject::tr("Cannot inspect an entry in EPUB \"%1\": %2"))
+                                          .arg(QDir::toNativeSeparators(m_FullFilePath), entry_error).toStdString()));
             }
-            QDate moddate = QDate(file_info.tmu_date.tm_year,
-                                  file_info.tmu_date.tm_mon + 1,
-                                  file_info.tmu_date.tm_mday);
-            QTime modtime = QTime(file_info.tmu_date.tm_hour,
-                                  file_info.tmu_date.tm_min,
-                                  file_info.tmu_date.tm_sec);
-            QDateTime modinfo = QDateTime(moddate, modtime);
-            QString modified = modinfo.toString("yyyy-MM-dd hh:mm:ss");
-            size_t afilesize = file_info.uncompressed_size;
-            QString afilecrc = QString("%1").arg(file_info.crc, 8, 16, QLatin1Char('0'));
-            
+            QString qfile_name = entry_info.name;
+            QString cp437_file_name = entry_info.cp437_name;
+            const bool is_directory = entry_info.is_directory;
+            const bool creates_alias = !is_directory &&
+                                       !cp437_file_name.isEmpty() &&
+                                       cp437_file_name != qfile_name;
+            std::string limit_error;
+            if (!limiter.BeginEntry(entry_info.compressed_size,
+                                    entry_info.uncompressed_size,
+                                    is_directory, creates_alias ? 2 : 1,
+                                    &limit_error)) {
+                throw_limit_error(qfile_name, limit_error);
+            }
+            QString modified = entry_info.modified.toString("yyyy-MM-dd hh:mm:ss");
+            size_t afilesize = entry_info.uncompressed_size;
+            QString afilecrc = QString("%1").arg(entry_info.crc, 8, 16, QLatin1Char('0'));
+
             // qDebug() << "File:      " << qfile_name;
-            // qDebug() << "  Size:    " << file_info.uncompressed_size;
+            // qDebug() << "  Size:    " << entry_info.uncompressed_size;
             // qDebug() << "  ModDate: " << modified;
 
             // If there is no file name then we can't do anything with it.
             if (!qfile_name.isEmpty()) {
 
-                // for security reasons against maliciously crafted zip archives
-                // we need the file path to always be inside the target folder 
-                // and not outside, so we will remove all illegal backslashes
-                // and all relative upward paths segments "/../" from the zip's local 
-                // file name/path before prepending the target folder to create 
-                // the final path
-
-                QString original_path = qfile_name;
-                bool evil_or_corrupt_epub = false;
-
-                if (qfile_name.contains("\\")) evil_or_corrupt_epub = true; 
-                qfile_name = "/" + qfile_name.replace("\\","");
-
-                if (qfile_name.contains("/../")) evil_or_corrupt_epub = true;
-                qfile_name = qfile_name.replace("/../","/");
-
-                while(qfile_name.startsWith("/")) { 
-                    qfile_name = qfile_name.remove(0,1);
+                const QString original_path = qfile_name;
+                QString sanitized_name;
+                QString sanitized_alias;
+                bool evil_or_corrupt_epub = !ZipEntryIO::SanitizePath(qfile_name, &sanitized_name);
+                if (!ZipEntryIO::SanitizePath(cp437_file_name, &sanitized_alias)) {
+                    evil_or_corrupt_epub = true;
                 }
-
-                if (cp437_file_name.contains("\\")) evil_or_corrupt_epub = true; 
-                cp437_file_name = "/" + cp437_file_name.replace("\\","");
-
-                if (cp437_file_name.contains("/../")) evil_or_corrupt_epub = true;
-                cp437_file_name = cp437_file_name.replace("/../","/");
-
-                while(cp437_file_name.startsWith("/")) { 
-                    cp437_file_name = cp437_file_name.remove(0,1);
-                }
+                qfile_name = sanitized_name;
+                cp437_file_name = sanitized_alias;
 
                 if (evil_or_corrupt_epub) {
-                    unzCloseCurrentFile(zfile);
                     unzClose(zfile);
                     throw (EPUBLoadParseError(QString(QObject::tr("Possible evil or corrupt epub file name: %1")).arg(original_path).toStdString()));
                 }
 
                 // We use the dir object to create the path in the temporary directory.
                 // Unfortunately, we need a dir ojbect to do this as it's not a static function.
-                QDir dir(m_ExtractedFolderPath);
+                QDir dir(extraction_path);
                 // Full file path in the temporary directory.
-                QString file_path = m_ExtractedFolderPath + "/" + qfile_name;
+                QString file_path = extraction_path + "/" + qfile_name;
                 QFileInfo qfile_info(file_path);
 
                 QString bookpath;
 
                 // Is this entry a directory?
-                if (file_info.uncompressed_size == 0 && qfile_name.endsWith('/')) {
+                if (is_directory) {
                     dir.mkpath(qfile_name);
                     continue;
                 } else {
+                    if (!ZipEntryIO::ReserveOutputPath(&reserved_paths, qfile_name) ||
+                        (creates_alias &&
+                         !ZipEntryIO::ReserveOutputPath(&reserved_paths, cp437_file_name))) {
+                        unzClose(zfile);
+                        throw (EPUBLoadParseError(QString(QObject::tr("Duplicate file name in EPUB: %1")).arg(original_path).toStdString()));
+                    }
                     if (!qfile_info.path().isEmpty()) dir.mkpath(qfile_info.path());
                     // add it to the list of files found inside the zip
                     if (cp437_file_name.isEmpty()) {
@@ -514,51 +576,38 @@ void ImportEPUB::ExtractContainer()
                     }
                 }
 
-                // Open the file entry in the archive for reading.
-                if (unzOpenCurrentFile(zfile) != UNZ_OK) {
-                    unzClose(zfile);
-                    throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
+                // Stream the entry to disk.  This owns the whole open/read/close
+                // cycle of the archive entry and verifies that every byte read
+                // actually reached the disk.
+                const ZipEntryIO::ExtractResult extracted =
+                    ZipEntryIO::ExtractCurrentEntry(zfile, file_path, &limiter);
+
+                if (extracted.status == ZipEntryIO::Status::LimitExceeded) {
+                    throw_limit_error(qfile_name, extracted.limit_error);
+                }
+                if (extracted.status != ZipEntryIO::Status::Ok) {
+                    throw_extract_error(qfile_name);
                 }
 
-                // Open the file on disk to write the entry in the archive to.
-                QFile entry(file_path);
+                QFile::setPermissions(file_path,
+                                      QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                      QFileDevice::ReadUser  | QFileDevice::WriteUser  |
+                                      QFileDevice::ReadOther);
 
-                if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
-                    throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
-                }
-
-                // Buffered reading and writing.
-                char buff[BUFF_SIZE] = {0};
-                int read = 0;
-
-                while ((read = unzReadCurrentFile(zfile, buff, BUFF_SIZE)) > 0) {
-                    entry.write(buff, read);
-                }
-
-                entry.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                     QFileDevice::ReadUser  | QFileDevice::WriteUser  |
-                                     QFileDevice::ReadOther);
-                entry.close();
-
-                // Read errors are marked by a negative read amount.
-                if (read < 0) {
-                    unzCloseCurrentFile(zfile);
-                    unzClose(zfile);
-                    throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
-                }
-
-                // The file was read but the CRC did not match.
-                // We don't check the read file size vs the uncompressed file size
-                // because if they're different there should be a CRC error.
-                if (unzCloseCurrentFile(zfile) == UNZ_CRCERROR) {
-                    unzClose(zfile);
-                    throw (EPUBLoadParseError(QString(QObject::tr("Cannot extract file: %1")).arg(qfile_name).toStdString()));
-                }
-                if (!cp437_file_name.isEmpty() && cp437_file_name != qfile_name) {
-                    QString cp437_file_path = m_ExtractedFolderPath + "/" + cp437_file_name;
-                    QFile::copy(file_path, cp437_file_path);
+                if (creates_alias) {
+                    if (!limiter.AccountAdditionalOutputBytes(limiter.CurrentEntryBytes(),
+                                                              &limit_error)) {
+                        throw_limit_error(qfile_name, limit_error);
+                    }
+                    QString cp437_file_path = extraction_path + "/" + cp437_file_name;
+                    // The two readings of the same bytes can differ in their
+                    // directory components, so the alias may need a path of
+                    // its own before it can be written.
+                    QFileInfo cp437_file_info(cp437_file_path);
+                    if (!cp437_file_info.path().isEmpty()) dir.mkpath(cp437_file_info.path());
+                    if (!QFile::copy(file_path, cp437_file_path)) {
+                        throw_extract_error(cp437_file_name);
+                    }
                 }
                 m_FileInfoFromZip[bookpath] = std::make_tuple(afilesize, afilecrc, modified);
             }
@@ -571,11 +620,19 @@ void ImportEPUB::ExtractContainer()
     }
 
     unzClose(zfile);
+
+    try {
+        Utility::CopyFiles(extraction_path, m_ExtractedFolderPath);
+    } catch (const CannotCopyFile &) {
+        throw (EPUBLoadParseError(QString(QObject::tr("Cannot finish extracting EPUB: %1"))
+                                  .arg(QDir::toNativeSeparators(m_FullFilePath)).toStdString()));
+    }
 }
 
 void ImportEPUB::LocateOPF()
 {
-    QString fullpath = m_ExtractedFolderPath + "/META-INF/container.xml";
+    QString fullpath = ResolveEpubPath(m_ExtractedFolderPath, "META-INF/container.xml",
+                                       QObject::tr("container.xml"));
     QXmlStreamReader container;
     try {
         container.addData(Utility::ReadUnicodeTextFile(fullpath));
@@ -611,7 +668,9 @@ void ImportEPUB::LocateOPF()
                 // As per OCF spec, the first rootfile element
                 // with the OEBPS mimetype is considered the "main" one.
                 if (m_OPFFilePath.isEmpty()) {
-                    m_OPFFilePath = m_ExtractedFolderPath + "/" + container.attributes().value("", "full-path").toString();
+                    const QString rootfile_path = container.attributes().value("", "full-path").toString();
+                    m_OPFFilePath = ResolveEpubPath(m_ExtractedFolderPath, rootfile_path,
+                                                    QObject::tr("container rootfile full-path"));
                 }
                 num_opf++;
 
@@ -640,8 +699,12 @@ void ImportEPUB::LocateOPF()
 
 void ImportEPUB::ReadOPF()
 {
+    m_OPFFilePath = ResolveEpubPath(m_ExtractedFolderPath, m_OPFFilePath,
+                                    QObject::tr("OPF file"), true);
     QString opf_text = CleanSource::ProcessXML(PrepareOPFForReading(Utility::ReadUnicodeTextFile(m_OPFFilePath)),
                                                OEBPS_MIMETYPE);
+    m_OPFFilePath = ResolveEpubPath(m_ExtractedFolderPath, m_OPFFilePath,
+                                    QObject::tr("OPF file before Resource creation"), true);
 
     QXmlStreamReader opf_reader(opf_text);
     QString ncx_id_on_spine;
@@ -692,11 +755,9 @@ void ImportEPUB::ReadOPF()
 
     
     //Important!  The OPF Resource in the new book must be created now before adding to it in any way
-    QString bookpath;
-    bookpath = m_OPFFilePath.right(m_OPFFilePath.length() - m_ExtractedFolderPath.length() - 1);
+    QString bookpath = QDir(m_ExtractedFolderPath).relativeFilePath(m_OPFFilePath);
     OPFResource* oresource = m_Book->GetFolderKeeper()->AddOPFToFolder(m_PackageVersion, bookpath);
-    QString OPFBookRelPath = m_OPFFilePath;
-    OPFBookRelPath = OPFBookRelPath.remove(0,m_ExtractedFolderPath.length()+1);
+    QString OPFBookRelPath = QDir(m_ExtractedFolderPath).relativeFilePath(m_OPFFilePath);
     m_Book->GetOPF()->SetCurrentBookRelPath(OPFBookRelPath);
     oresource->SetText(opf_text);
     oresource->SaveToDisk(false);
@@ -735,8 +796,10 @@ void ImportEPUB::ReadMetadataLinkElement(QXmlStreamReader *opf_reader)
     QString props = opf_reader->attributes().value("", "properties").toString();
     QString href = opf_reader->attributes().value("", "href").toString();
     if (!href.isEmpty()) {
-        QUrl url = QUrl(href);
-        if (url.isRelative()) {
+        QDir opf_dir = QFileInfo(m_OPFFilePath).dir();
+        QString path;
+        if (ResolveLocalEpubHref(opf_dir.absolutePath(), href,
+                                 QObject::tr("metadata link href"), &path)) {
             // we have a local unmanifested metadata file to handle
             // attempt to map deprecated record types into proper media-types
             if (relation == "marc21xml-record") {
@@ -755,8 +818,6 @@ void ImportEPUB::ReadMetadataLinkElement(QXmlStreamReader *opf_reader)
                 if (props == "onix") mtype = "application/xml;onix";
                 if (props == "xmp") mtype = "application/xml;xmp";
             }
-            QDir opf_dir = QFileInfo(m_OPFFilePath).dir();
-            QString path = opf_dir.absolutePath() + "/" + url.path();
             if (QFile::exists(path)) {
                 QString id = Utility::CreateUUID();
                 m_Files[ id ]  = opf_dir.relativeFilePath(path);
@@ -778,9 +839,13 @@ void ImportEPUB::ReadManifestItemElement(QXmlStreamReader *opf_reader)
     // Note:  Under epub3 they can point outside the epub so need to handle full url
 
     QString apath;
-    if (href.indexOf(':') == -1) {
-        // we know we have a relative href to a file so no fragments can exist
-        apath = Utility::URLDecodePath(href);
+    QString file_path;
+    QString absolute_path;
+    if (!href.isEmpty() && ResolveLocalEpubHref(m_opfDir.absolutePath(), href,
+                                                QObject::tr("manifest item href"), &absolute_path)) {
+        // Local manifest hrefs are normalized once and stored OPF-relative.
+        apath = m_opfDir.relativeFilePath(absolute_path);
+        file_path = QDir(m_ExtractedFolderPath).relativeFilePath(absolute_path);
     }
     // for hrefs pointing outside the epub, apath will be empty
     // qDebug() << "ImportEpub with Manifest item: " << href << apath;
@@ -796,12 +861,6 @@ void ImportEPUB::ReadManifestItemElement(QXmlStreamReader *opf_reader)
     }
 
     if (!apath.isEmpty()) {
-        
-        // find the epub root relative file path from the opf location and the item href
-        QString file_path = m_opfDir.absolutePath() + "/" + apath;
-        file_path = Utility::resolveRelativeSegmentsInFilePath(file_path,"/");
-        file_path = file_path.remove(0, m_ExtractedFolderPath.length() + 1); 
-    
         // Manifest Items may *NOT* live in the META-INF and the mimetype file should NOT be manifested
         if (file_path.startsWith("META-INF/") || (file_path == "mimetype")) {
             const QString load_warning = QObject::tr("The OPF has an illegal Manifest entry for a file inside the META-INF folder for file \"%1\"").arg(QFileInfo(file_path).fileName()) +
@@ -860,11 +919,14 @@ void ImportEPUB::LocateOrCreateNCX(const QString &ncx_id_on_spine)
     if (!m_NCXId.isEmpty() && m_NcxCandidates.contains(m_NCXId)) {
         QString bookpath;
         ncx_href = m_NcxCandidates[ m_NCXId ];
-        m_NCXFilePath = QFileInfo(m_OPFFilePath).absolutePath() % "/" % ncx_href;
-        m_NCXFilePath = Utility::resolveRelativeSegmentsInFilePath(m_NCXFilePath, "/");
-        bookpath = m_NCXFilePath.right(m_NCXFilePath.length() - m_ExtractedFolderPath.length() - 1);
+        const QString ncx_candidate = QDir(QFileInfo(m_OPFFilePath).absolutePath()).absoluteFilePath(ncx_href);
+        m_NCXFilePath = ResolveEpubPath(m_ExtractedFolderPath, ncx_candidate,
+                                        QObject::tr("NCX manifest href"), true);
+        bookpath = QDir(m_ExtractedFolderPath).relativeFilePath(m_NCXFilePath);
         QString ncx_text = CleanSource::ProcessXML(Utility::ReadUnicodeTextFile(m_NCXFilePath),
                                                    "application/x-dtbncx+xml");
+        m_NCXFilePath = ResolveEpubPath(m_ExtractedFolderPath, m_NCXFilePath,
+                                        QObject::tr("NCX file before Resource creation"), true);
         NCXResource* resource = m_Book->GetFolderKeeper()->AddNCXToFolder(m_PackageVersion, bookpath);
         resource->SetText(ncx_text);
         resource->SaveToDisk(false);
@@ -901,11 +963,14 @@ void ImportEPUB::LocateOrCreateNCX(const QString &ncx_id_on_spine)
     if (found) {
         // m_NCXId has now been properly set
         ncx_href = m_NcxCandidates[ m_NCXId ];
-        m_NCXFilePath = QFileInfo(m_OPFFilePath).absolutePath() % "/" % ncx_href;
-        m_NCXFilePath = Utility::resolveRelativeSegmentsInFilePath(m_NCXFilePath, "/");
+        const QString ncx_candidate = QDir(QFileInfo(m_OPFFilePath).absolutePath()).absoluteFilePath(ncx_href);
+        m_NCXFilePath = ResolveEpubPath(m_ExtractedFolderPath, ncx_candidate,
+                                        QObject::tr("NCX manifest href"), true);
         QString ncx_text = CleanSource::ProcessXML(Utility::ReadUnicodeTextFile(m_NCXFilePath),
                                                    "application/x-dtbncx+xml");
-        QString bookpath = m_NCXFilePath.right(m_NCXFilePath.length() - m_ExtractedFolderPath.length() - 1);
+        m_NCXFilePath = ResolveEpubPath(m_ExtractedFolderPath, m_NCXFilePath,
+                                        QObject::tr("NCX file before Resource creation"), true);
+        QString bookpath = QDir(m_ExtractedFolderPath).relativeFilePath(m_NCXFilePath);
         NCXResource* resource = m_Book->GetFolderKeeper()->AddNCXToFolder(m_PackageVersion, bookpath);
         resource->SetText(ncx_text);
         resource->SaveToDisk(false);
@@ -943,7 +1008,8 @@ void ImportEPUB::LocateOrCreateNCX(const QString &ncx_id_on_spine)
     load_warning = QObject::tr("The OPF file does not contain an NCX file.") + "\n" + 
                                " - " +  QObject::tr("Sigil has created a new one for you.");
 
-    m_NCXFilePath = QFileInfo(m_OPFFilePath).absolutePath() + "/toc.ncx";
+    m_NCXFilePath = ResolveEpubPath(QFileInfo(m_OPFFilePath).absolutePath(), "toc.ncx",
+                                    QObject::tr("generated NCX file"));
 
     // Create a new file for the NCX in the *Extracted Folder* Path
     // We are relying on an identifier being set from the metadata.
@@ -958,7 +1024,7 @@ void ImportEPUB::LocateOrCreateNCX(const QString &ncx_id_on_spine)
     ncx_resource.SaveToDisk(false);
 
     // now add the NCX to our folder
-    QString bookpath = m_NCXFilePath.right(m_NCXFilePath.length() - m_ExtractedFolderPath.length() - 1);
+    QString bookpath = QDir(m_ExtractedFolderPath).relativeFilePath(m_NCXFilePath);
     NCXResource* nresource = m_Book->GetFolderKeeper()->AddNCXToFolder(m_PackageVersion, bookpath);
     if (!load_warning.isEmpty()) {
         AddLoadWarning(load_warning);
@@ -968,32 +1034,35 @@ void ImportEPUB::LocateOrCreateNCX(const QString &ncx_id_on_spine)
 
 void ImportEPUB::LoadInfrastructureFiles()
 {
+    m_OPFFilePath = ResolveEpubPath(m_ExtractedFolderPath, m_OPFFilePath,
+                                    QObject::tr("OPF file before reload"), true);
     // always SetEpubVersion before SetText in OPF as SetText will validate with it
     m_Book->GetOPF()->SetEpubVersion(m_PackageVersion);
     QString opf_text = CleanSource::ProcessXML(PrepareOPFForReading(Utility::ReadUnicodeTextFile(m_OPFFilePath))
                                                ,OEBPS_MIMETYPE);
     m_Book->GetOPF()->SetText(opf_text);
-    QString OPFBookRelPath = m_OPFFilePath;
-    OPFBookRelPath = OPFBookRelPath.remove(0,m_ExtractedFolderPath.length()+1);
+    QString OPFBookRelPath = QDir(m_ExtractedFolderPath).relativeFilePath(m_OPFFilePath);
     m_Book->GetOPF()->SetCurrentBookRelPath(OPFBookRelPath);
     NCXResource * ncxresource = m_Book->GetNCX();
     if (ncxresource) {
+        m_NCXFilePath = ResolveEpubPath(m_ExtractedFolderPath, m_NCXFilePath,
+                                        QObject::tr("NCX file before reload"), true);
         ncxresource->SetEpubVersion(m_PackageVersion);
         ncxresource->SetText(CleanSource::ProcessXML(Utility::ReadUnicodeTextFile(m_NCXFilePath),"application/x-dtbncx+xml"));
-        QString NCXBookRelPath = m_NCXFilePath;
-        NCXBookRelPath = NCXBookRelPath.remove(0,m_ExtractedFolderPath.length()+1);
+        QString NCXBookRelPath = QDir(m_ExtractedFolderPath).relativeFilePath(m_NCXFilePath);
         ncxresource->SetCurrentBookRelPath(NCXBookRelPath);
     }
 }
 
 
-bool ImportEPUB::LoadFolderStructure()
+ImportEPUB::FolderLoadResult ImportEPUB::LoadFolderStructure()
 {
     QList<QString> keys = m_Files.keys();
     int num_files = keys.count();
-    bool success = true;
+    FolderLoadResult folder_result;
+    folder_result.success = true;
 
-    QFutureSynchronizer<std::tuple<QString, QString>> sync;
+    QFutureSynchronizer<FileLoadResult> sync;
 
     for (int i = 0; i < num_files; ++i) {
         QString id = keys.at(i);
@@ -1015,30 +1084,46 @@ bool ImportEPUB::LoadFolderStructure()
     }
 
     sync.waitForFinished();
-    QList<QFuture<std::tuple<QString, QString>>> futures = sync.futures();
+    QList<QFuture<FileLoadResult>> futures = sync.futures();
     int num_futures = futures.count();
 
     for (int i = 0; i < num_futures; ++i) {
-        std::tuple<QString, QString> result = futures.at(i).result();
-        if (std::get<0>(result) != std::get<1>(result)) {
-            qDebug() << "LoadFolderStructure Issue: " << std::get<0>(result) << std::get<1>(result);
-            success = false;
+        const FileLoadResult result = futures.at(i).result();
+        if (!result.success) {
+            folder_result.success = false;
+            folder_result.errors.append(result.error.isEmpty()
+                                        ? QObject::tr("Unable to load EPUB resource \"%1\".").arg(result.original_path)
+                                        : result.error);
         }
     }
 
-    return success;
+    return folder_result;
 }
 
 
-std::tuple<QString, QString> ImportEPUB::LoadOneFile(const QString &path, const QString &mimetype)
+ImportEPUB::FileLoadResult ImportEPUB::LoadOneFile(const QString &path, const QString &mimetype)
 {
-    // Use opf relative href to create the book path (currentpath) for this file
-    QString fullfilepath = QDir::cleanPath(QFileInfo(m_OPFFilePath).absolutePath() + "/" + path);
-    QString currentpath = fullfilepath;
-    currentpath = currentpath.remove(0,m_ExtractedFolderPath.length()+1);
+    FileLoadResult result;
+    result.success = false;
+    result.original_path = path;
+
+    QString fullfilepath;
+    QString currentpath;
+
     try {
+        // Use opf relative href to create the book path (currentpath) for this file
+        const QString candidate = QDir(QFileInfo(m_OPFFilePath).absolutePath()).absoluteFilePath(path);
+        fullfilepath = ResolveEpubPath(m_ExtractedFolderPath, candidate,
+                                       QObject::tr("resource before loading"), true);
+        currentpath = QDir(m_ExtractedFolderPath).relativeFilePath(fullfilepath);
         QString bookpath = currentpath;
-        Resource *resource = m_Book->GetFolderKeeper()->AddContentFileToFolder(fullfilepath, false, mimetype, bookpath);
+        Resource *resource = m_Book->GetFolderKeeper()->AddContentFileToFolder(
+                                 fullfilepath, false, mimetype, bookpath, QString(), m_ExtractedFolderPath);
+        if (!resource) {
+            result.error = QObject::tr("Cannot create or copy EPUB resource \"%1\" (source: %2).")
+                           .arg(path, currentpath);
+            return result;
+        }
         if (m_FileInfoFromZip.contains(bookpath)) {
             std::tuple<size_t, QString, QString> ainfo = m_FileInfoFromZip[bookpath];
             resource->SetSavedSize(std::get<0>(ainfo));
@@ -1048,11 +1133,21 @@ std::tuple<QString, QString> ImportEPUB::LoadOneFile(const QString &path, const 
         if (path == m_NavHref) {
             m_NavResource = resource;
         }
-        QString newpath = resource->GetRelativePath();
-        return std::make_tuple(currentpath, newpath);
-    } catch (FileDoesNotExist&) {
-        return std::make_tuple(UPDATE_ERROR_STRING, UPDATE_ERROR_STRING);
+        result.success = true;
+        result.loaded_path = resource->GetRelativePath();
+        return result;
+    } catch (EPUBLoadParseError &path_error) {
+        result.error = QObject::tr("Cannot load EPUB resource \"%1\": %2")
+                       .arg(path, QString::fromUtf8(path_error.what()));
+    } catch (FileDoesNotExist &file_error) {
+        result.error = QObject::tr("EPUB manifest resource \"%1\" does not exist (source: %2).")
+                       .arg(path, QString::fromUtf8(file_error.what()));
+    } catch (const std::exception &error) {
+        result.error = QObject::tr("Cannot load EPUB resource \"%1\": %2")
+                       .arg(path, QString::fromUtf8(error.what()));
     }
+
+    return result;
 }
 
 

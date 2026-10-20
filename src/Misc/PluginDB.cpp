@@ -158,8 +158,9 @@ PluginDB::AddResult PluginDB::add_plugin(const QString &path, bool force)
         name.truncate(version_index);
     }
 
-    if (!verify_plugin_zip(path, name)) {
-        return PluginDB::AR_INVALID;
+    bool resource_limit_exceeded = false;
+    if (!verify_plugin_zip(path, name, &resource_limit_exceeded)) {
+        return resource_limit_exceeded ? PluginDB::AR_UNZIP : PluginDB::AR_INVALID;
     }
 
     if (!Utility::UnZip(path, pluginsPath())) {
@@ -207,9 +208,10 @@ PluginDB::AddResult PluginDB::add_plugin_int(const QString &name, bool force)
     return PluginDB::AR_SUCCESS;
 }
 
-bool PluginDB::verify_plugin_zip(const QString &path, const QString &name)
+bool PluginDB::verify_plugin_zip(const QString &path, const QString &name,
+                                 bool *resource_limit_exceeded)
 {
-    QStringList filelist = Utility::ZipInspect(path);
+    QStringList filelist = Utility::ZipInspect(path, resource_limit_exceeded);
     if (filelist.isEmpty()) {
         return false;
     }

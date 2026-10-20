@@ -875,6 +875,37 @@ if a sans-serif font-family specified in your CSS</source>
 <context>
     <name>BookBrowser</name>
     <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="99"/>
+        <location filename="../../MainUI/BookBrowser.cpp" line="322"/>
+        <source>Move in Reading Order</source>
+        <translation>调整阅读顺序</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="319"/>
+        <source>Select the HTML file to move the selected file(s) after:</source>
+        <translation>请选择要将所选文件移动到其后的 HTML 文件：</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="320"/>
+        <source>Select the HTML file to move the selected file(s) before:</source>
+        <translation>请选择要将所选文件移动到其前的 HTML 文件：</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="375"/>
+        <source>Selected HTML file(s) moved in the reading order.</source>
+        <translation>已在阅读顺序中移动所选 HTML 文件。</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1987"/>
+        <source>Move Before HTML File...</source>
+        <translation>移到指定 HTML 文件之前...</translation>
+    </message>
+    <message>
+        <location filename="../../MainUI/BookBrowser.cpp" line="1988"/>
+        <source>Move After HTML File...</source>
+        <translation>移到指定 HTML 文件之后...</translation>
+    </message>
+    <message>
         <location filename="../../MainUI/BookBrowser.cpp" line="0"/>
         <source>Insert Into HTML/CSS File</source>
         <translation>插入到 HTML/CSS 文档</translation>
@@ -1366,6 +1397,25 @@ There always has to be at least one.</source>
         <location filename="../../ResourceObjects/CSSResource.cpp" line="101"/>
         <source>If your browser does not have javascript enabled, click on the button below.</source>
         <translation>如果您的浏览器没有启用javascript，点击下面的按钮。</translation>
+    </message>
+</context>
+<context>
+    <name>CSSWindow</name>
+    <message>
+        <source>CSS Editor</source>
+        <translation>CSS 编辑器</translation>
+    </message>
+    <message>
+        <source>No CSS files</source>
+        <translation>没有 CSS 文件</translation>
+    </message>
+    <message>
+        <source>Auto-saving...</source>
+        <translation>正在自动保存…</translation>
+    </message>
+    <message>
+        <source>Auto-saved</source>
+        <translation>已自动保存</translation>
     </message>
 </context>
 <context>
@@ -20010,6 +20060,53 @@ Continue using the requested filename?</source>
     </message>
 </context>
 <context>
+    <name>ViewPreview</name>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>撤销(&amp;U)</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>重做(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Cu&amp;t</source>
+        <translation>剪切(&amp;T)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>复制(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Paste</source>
+        <translation>粘贴(&amp;P)</translation>
+    </message>
+    <message>
+        <source>&amp;Delete</source>
+        <translation>删除(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Select &amp;All</source>
+        <translation>全选(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Copy &amp;Link Address</source>
+        <translation>复制链接地址(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Reload Preview</source>
+        <translation>重新加载预览(&amp;R)</translation>
+    </message>
+    <message>
+        <source>&amp;Print...</source>
+        <translation>打印(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>&amp;Inspect Page</source>
+        <translation>检查页面(&amp;I)</translation>
+    </message>
+</context>
+<context>
     <name>WellFormedCheckComponent</name>
     <message>
         <location filename="../../Tabs/WellFormedCheckComponent.cpp" line="43"/>
@@ -21298,6 +21395,37 @@ Continue using the requested filename?</source>
         <location filename="../../Misc/XMLEntities.cpp" line="349"/>
         <source>black diamond suit</source>
         <translation>黑方块♦</translation>
+    </message>
+</context>
+<context>
+    <name>StandardTextActions</name>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>撤销(&amp;U)</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>重做(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Cu&amp;t</source>
+        <translation>剪切(&amp;T)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>复制(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Paste</source>
+        <translation>粘贴(&amp;P)</translation>
+    </message>
+    <message>
+        <source>&amp;Delete</source>
+        <translation>删除(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>选择所有</translation>
     </message>
 </context>
 </TS>

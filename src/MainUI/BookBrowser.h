@@ -332,6 +332,16 @@ private slots:
     void MoveSelected();
 
     /**
+     * Moves the selected HTML resources immediately before a chosen HTML file.
+     */
+    void MoveSelectedHTMLBefore();
+
+    /**
+     * Moves the selected HTML resources immediately after a chosen HTML file.
+     */
+    void MoveSelectedHTMLAfter();
+
+    /**
      * Implements the Delete context menu action functionality.
      */
     void Delete();
@@ -478,6 +488,11 @@ private:
 
     void RefreshCounts();
 
+    /**
+     * Prompts for a target HTML file and moves the selected files as an ordered block.
+     */
+    void MoveSelectedHTMLRelative(bool move_after);
+
 
     ///////////////////////////////
     // PRIVATE MEMBER VARIABLES
@@ -509,6 +524,11 @@ private:
      */
     QMenu *m_FontObfuscationContextMenu;
 
+    /**
+     * The sub-menu for changing the reading order relative to another HTML file.
+     */
+    QMenu *m_ReadingOrderContextMenu;
+
     // The context menu actions.
 
     QAction *m_SelectAll;
@@ -530,6 +550,8 @@ private:
     QAction *m_AdobesObfuscationMethod;
     QAction *m_IdpfsObfuscationMethod;
     QAction *m_SortHTML;
+    QAction *m_MoveHTMLBefore;
+    QAction *m_MoveHTMLAfter;
     QAction *m_RenumberTOC;
     QAction *m_LinkStylesheets;
     QAction *m_LinkJavascripts;

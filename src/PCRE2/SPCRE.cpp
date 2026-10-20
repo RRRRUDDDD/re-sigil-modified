@@ -76,12 +76,20 @@ SPCRE::SPCRE(const QString &patten)
     else {
         m_valid = false;
         PCRE2_UCHAR16 buffer[256];
-        pcre2_get_error_message_16(errorno, buffer, sizeof(buffer));
+        // The API counts 16 bit code units, not bytes: passing sizeof(buffer)
+        // would promise twice the room the buffer actually has.
+        const int message_length = pcre2_get_error_message_16(errorno, buffer,
+                                       sizeof(buffer) / sizeof(buffer[0]));
+        if (message_length > 0) {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-        m_error = QString::fromUtf16(buffer);
+            m_error = QString::fromUtf16(buffer, message_length);
 #else
-        m_error = QString::fromUtf16(reinterpret_cast<char16_t*>(buffer));
+            m_error = QString::fromUtf16(reinterpret_cast<char16_t*>(buffer), message_length);
 #endif
+        } else {
+            // The buffer is left untouched on failure, so it must not be read.
+            m_error = QString("PCRE2 error %1").arg(errorno);
+        }
         m_errpos = erroroffset;
         // qDebug() << "SPCRE invalid pattern: " << m_pattern;
         // qDebug() << "SPCRE error: " << m_error;
@@ -177,10 +185,6 @@ QList<SPCRE::MatchInfo> SPCRE::getEveryMatchInfo(const QString &text)
         return info;
     }
 
-    int rc = 0;
-
-    PCRE2_SIZE * ovector = NULL;
-
     // Set the size of the array based on the number of capture subpatterns
     // if it does not exceed our maximum size.
     int ovector_count = getCaptureSubpatternCount();
@@ -189,31 +193,61 @@ QList<SPCRE::MatchInfo> SPCRE::getEveryMatchInfo(const QString &text)
         ovector_count = PCRE_MAX_CAPTURE_GROUPS;
     }
 
-    // We keep track of the last offsets as we move though the string matching
-    // sub strings.
-    int last_offset[2] = {0};
-    bool done = false;
-    
-    // Run until no matches are found.
-    do {
+    const PCRE2_SIZE subject_length = static_cast<PCRE2_SIZE>(text.length());
+    PCRE2_SIZE start_offset = 0;
+    // Set only for the retry that follows an empty match, to ask for a longer
+    // match at that very position before the scan moves on.
+    uint32_t options = 0;
 
-        rc = pcre2_match_16(m_re, text.utf16(), text.length(), last_offset[1], 0, m_matchdata, m_mcontext);
+    // Run until no matches are found.  This is the empty match handling PCRE2
+    // documents: report the empty match once, retry the same position for a
+    // non-empty one, and only then step forward.  Simply treating an empty
+    // match as the end of the scan (as this used to) made every zero width
+    // pattern -- "^", "$", "\b", a lookahead -- match nothing at all.
+    for (;;) {
+        const int rc = pcre2_match_16(m_re, text.utf16(), subject_length,
+                                      start_offset, options, m_matchdata, m_mcontext);
+
+        if (rc < 0) {
+            if (rc != PCRE2_ERROR_NOMATCH || options == 0) {
+                // A genuine error, or simply nothing left to find.
+                break;
+            }
+            // There is no longer match where the empty match was reported, so
+            // step over that position and carry on from there.
+            start_offset = static_cast<PCRE2_SIZE>(
+                Utility::NextCodePointOffset(text, static_cast<int>(start_offset)));
+            options = 0;
+
+            if (start_offset > subject_length) {
+                break;
+            }
+            continue;
+        }
 
         // NOTE: until a call to pcre2_match_16 happens even through m_matchdata exists
         // and the ovector count is known, the pcre2_get_ovector_pointer returns a pointer
         // to invalid ovector data
-        ovector = pcre2_get_ovector_pointer_16(m_matchdata);
+        PCRE2_SIZE *ovector = pcre2_get_ovector_pointer_16(m_matchdata);
+        const PCRE2_SIZE match_start = ovector[0];
+        const PCRE2_SIZE match_end = ovector[1];
 
-        done = (ovector[1] == last_offset[1]) || (ovector[0] >= ovector[1]);
+        info.append(generateMatchInfo(ovector, ovector_count));
 
-        last_offset[0] = ovector[0];
-        last_offset[1] = ovector[1];
+        start_offset = match_end;
 
-        if (rc >= 0 && ovector[0] != ovector[1] && ovector[0] < ovector[1]) {
-            info.append(generateMatchInfo(ovector, ovector_count));
+        if (match_start == match_end) {
+            if (match_end >= subject_length) {
+                break;
+            }
+            // Retrying the same position for a non-empty match is what keeps
+            // this empty match from being reported over and over.
+            options = PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED;
+        } else {
+            options = 0;
         }
-    } while (rc >= 0 && !done);
-    
+    }
+
     return info;
 }
 
@@ -246,7 +280,10 @@ SPCRE::MatchInfo SPCRE::getFirstMatchInfo(const QString &text)
     rc = pcre2_match_16(m_re, text.utf16(), text.length(), 0, 0, m_matchdata, m_mcontext);
     PCRE2_SIZE * ovector = pcre2_get_ovector_pointer_16(m_matchdata);
 
-    if (rc >= 0 && ovector[0] != ovector[1]) {
+    // A zero width match is a real match: "^", "$", "\b" and lookarounds can
+    // only ever match empty.  Callers that search from a cursor have to make
+    // sure they move past it, see CodeViewEditor::FindNext().
+    if (rc >= 0) {
         match_info = generateMatchInfo(ovector, ovector_count);
     }
 

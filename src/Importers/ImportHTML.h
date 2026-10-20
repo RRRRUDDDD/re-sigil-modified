@@ -24,6 +24,9 @@
 #ifndef IMPORTHTML_H
 #define IMPORTHTML_H
 
+#include <QHash>
+#include <QStringList>
+
 #include "Importers/Importer.h"
 #include "BookManipulation/XhtmlDoc.h"
 
@@ -54,6 +57,13 @@ public:
     const QStringList& GetAddedBookPaths();
 
 private:
+    struct ResourceLoadResult {
+        bool success = false;
+        QHash<QString, QString> updates;
+        QStringList added_book_paths;
+        QStringList errors;
+    };
+
 
     // Loads the source code into the Book
     QString LoadSource();
@@ -64,6 +74,8 @@ private:
 
     HTMLResource *CreateHTMLResource();
 
+    void RollbackAddedResources(int first_path_index);
+
     void UpdateFiles(HTMLResource *html_resource,
                      QString &source,
                      const QHash<QString, QString> &updates);
@@ -72,11 +84,10 @@ private:
     // as the files get a new name, the references are updated
     QHash<QString, QString> LoadFolderStructure(const QString & source);
 
-    // Returns a hash with keys being old references (URLs) to resources,
-    // and values being the new references to those resources.
-    QHash<QString, QString> LoadMediaFiles(const QStringList & file_paths);
+    // Returns explicit status, URL updates, newly added paths and diagnostics.
+    ResourceLoadResult LoadMediaFiles(const QStringList & file_paths);
 
-    QHash<QString, QString> LoadStyleFiles(const QStringList & file_paths);
+    ResourceLoadResult LoadStyleFiles(const QStringList & file_paths);
 
 
     ///////////////////////////////

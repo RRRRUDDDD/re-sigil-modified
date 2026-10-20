@@ -91,8 +91,9 @@ public:
      * since that doesn't do everything we want it to.
      *
      * @param document The new text document.
+     * @param reset_modified Clear the document's modified flag when true.
      */
-    void CustomSetDocument(TextDocument &document);
+    void CustomSetDocument(TextDocument &document, bool reset_modified = true);
 
     void DeleteLine();
 
@@ -239,6 +240,10 @@ public:
     void SetZoomFactor(float factor);
 
     float GetZoomFactor() const;
+
+    void SetFontPointSizeAdjustment(float delta);
+
+    void SetLineNumberMargin(int margin);
 
     void Zoom();
 
@@ -388,6 +393,13 @@ public:
      */
     bool ReformatHTMLEnabled();
     void SetReformatHTMLEnabled(bool value);
+
+    /**
+     * Controls whether Undo/Redo are routed to the main window's
+     * resource-wide undo stack. Editors that own a private document can
+     * disable this to use their own local undo stack.
+     */
+    void SetRouteUndoToMainWindow(bool route);
 
     bool PasteClipNumber(int clip_number);
 
@@ -819,6 +831,16 @@ private:
     float m_CurrentZoomFactor;
 
     /**
+     * Point size delta applied on top of the zoomed editor font.
+     */
+    float m_FontPointSizeAdjustment = 0.0f;
+
+    /**
+     * Horizontal padding used by the line number area.
+     */
+    int m_LineNumberMargin = 5;
+
+    /**
      * Catches when the user wants to scroll the view by one line up.
      */
     QShortcut *m_ScrollOneLineUp;
@@ -852,6 +874,11 @@ private:
      * Misspellings are marked by the QSyntaxHighlighter used.
      */
     bool m_checkSpelling;
+
+    /**
+     * Whether Undo/Redo are routed to the main window's undo stack.
+     */
+    bool m_RouteUndoToMainWindow;
 
     /**
      * Whether reformat CSS context menu option is enabled on this view.
