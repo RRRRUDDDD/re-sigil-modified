@@ -110,6 +110,7 @@ void CSSWindow::SetBook(Book *book)
     m_CurrentResource = nullptr;
     m_Book = book;
     m_ChangePending = false;
+    m_SyncedText.clear();
 
     m_Loading = true;
     m_EmptyDocument->clear();
@@ -215,6 +216,11 @@ void CSSWindow::BindResource(CSSResource *resource)
         m_Editor->CustomSetDocument(doc, false);
         m_Editor->Zoom();
         m_BoundDocument = &doc;
+        // Remember the text as it exists on disk. A hidden editor defers its
+        // syntax rehighlight, and that deferred pass emits contentsChanged
+        // even though nothing was edited. Comparing against this snapshot
+        // keeps such formatting-only signals from marking the book modified.
+        m_SyncedText = doc.toPlainText();
         connect(&doc, &QTextDocument::contentsChanged,
                 this, &CSSWindow::OnDocumentContentsChanged,
                 Qt::UniqueConnection);
@@ -241,6 +247,7 @@ void CSSWindow::DetachDocument()
         disconnect(m_BoundDocument.data(), nullptr, this, nullptr);
     }
     m_BoundDocument = nullptr;
+    m_SyncedText.clear();
 
     if (m_Editor->document() != m_EmptyDocument) {
         m_Editor->CustomSetDocument(*m_EmptyDocument, false);
@@ -252,10 +259,17 @@ void CSSWindow::DetachDocument()
 
 void CSSWindow::OnDocumentContentsChanged()
 {
-    if (m_Loading || !m_CurrentResource || !m_Book) {
+    if (m_Loading || !m_CurrentResource || !m_Book || !m_BoundDocument) {
         return;
     }
 
+    const QString text = m_BoundDocument->toPlainText();
+    if (text == m_SyncedText) {
+        // Formatting-only notification (e.g. a deferred syntax rehighlight).
+        return;
+    }
+
+    m_SyncedText = text;
     m_ChangePending = true;
     m_Book->SetModified(true);
     m_SaveTimer->start();
@@ -275,6 +289,9 @@ void CSSWindow::FlushPendingSave()
     // keeps the cursor and the shared undo stack intact. A book-wide save
     // suppresses ResourceUpdatedOnDisk so linked HTML tabs are not disturbed.
     m_CurrentResource->SaveToDisk(true);
+    if (m_BoundDocument) {
+        m_SyncedText = m_BoundDocument->toPlainText();
+    }
     m_ChangePending = false;
     UpdateStatusLabel();
     emit CSSSaved();
