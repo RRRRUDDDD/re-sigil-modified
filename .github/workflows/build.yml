@@ -33,6 +33,14 @@ jobs:
           arch: x64
           toolset: 14.29
 
+      # install-qt-action defaults to a Python >=3.14 for aqtinstall, which has no
+      # prebuilt wheels for py7zr's binary dependencies. Pin 3.12 so aqtinstall
+      # installs wheels instead of compiling them.
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -42,6 +50,7 @@ jobs:
           arch: win64_msvc2019_64
           modules: qtwebengine
           cache: true
+          setup-python: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -145,6 +154,13 @@ jobs:
           arch: x86
           toolset: 14.29
 
+      # See the note in windows-x64: aqtinstall needs a Python with prebuilt
+      # py7zr dependency wheels, so do not let the action install its own.
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -154,6 +170,7 @@ jobs:
           arch: win32_msvc2019
           modules: qtwebengine
           cache: true
+          setup-python: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -254,6 +271,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -263,6 +285,7 @@ jobs:
           arch: clang_64
           modules: qtwebengine
           cache: true
+          setup-python: false
 
       - name: Install framework Python and payload
         shell: bash
@@ -331,6 +354,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -340,6 +368,7 @@ jobs:
           arch: clang_64
           modules: qt5compat qtpositioning qtwebchannel qtwebengine
           cache: true
+          setup-python: false
 
       - name: Install framework Python and payload
         shell: bash
