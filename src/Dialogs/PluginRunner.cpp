@@ -24,6 +24,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDateTime>
 #include <QByteArray>
 #include <QXmlStreamReader>
 #include <QXmlStreamAttributes>
@@ -44,6 +45,7 @@
 #include "BookManipulation/CleanSource.h"
 #include "BookManipulation/XhtmlDoc.h"
 #include "Dialogs/PluginRunner.h"
+#include "ResourceObjects/ImageResource.h"
 #include "sigil_constants.h"
 
 // These are defined in Importers/ImportEPUB.cpp and can be made available by including sigil_constants.h
@@ -522,7 +524,9 @@ void PluginRunner::pluginFinished(int exitcode, QProcess::ExitStatus exitstatus)
     const QList<Resource *> changed_binaries = BinaryResourcesChangedOnDisk();
     if (!changed_binaries.isEmpty()) {
         foreach (Resource *resource, changed_binaries) {
-            resource->LoadFromDisk();
+            if (resource->Type() == Resource::ImageResourceType) {
+                static_cast<ImageResource *>(resource)->LoadFromDisk();
+            }
         }
         book_modified = true;
     }
@@ -1103,7 +1107,7 @@ bool PluginRunner::modifyFiles(const QStringList &files)
 
                 // Binary resources keep no text cache, but an open image tab
                 // must still be told to show the file the plugin just wrote.
-                resource->LoadFromDisk();
+                static_cast<ImageResource *>(resource)->LoadFromDisk();
             }
         }
     }
