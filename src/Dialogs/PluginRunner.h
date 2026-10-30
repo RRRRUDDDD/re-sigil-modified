@@ -24,6 +24,8 @@
 
 #include <QString>
 #include <QStringList>
+#include <QHash>
+#include <QPair>
 #include <QDialog>
 #include <QProgressBar>
 #include <QProcess>
@@ -99,6 +101,9 @@ private:
     bool modifyFiles(const QStringList &);
     void writeSigilCFG();
 
+    void SnapshotBinaryResourceStamps();
+    QList<Resource *> BinaryResourcesChangedOnDisk() const;
+
 
     void connectSignalsToSlots();
 
@@ -134,6 +139,7 @@ private:
 
     QHash <QString, Resource *> m_hrefToRes;
     QHash <QString, Resource *> m_xhtmlFiles;
+    QHash <QString, QPair<qint64, qint64>> m_resourceStamps;
 
     bool m_ready;
 

@@ -4,7 +4,8 @@
 
 # quiet Qt 6 deprecat4ed warnings for now as we must support Qt 5.12.X and even earlier
 # add_definitions(-DQT_NO_DEPRECATED_WARNINGS)
-add_definitions(-DQT_IMPLICIT_QCHAR_CONSTRUCTION)
+# QT_IMPLICIT_QCHAR_CONSTRUCTION was removed outright in Qt 6.8 and makes
+# every translation unit fail with #error; it must not be defined anymore.
 
 set(QT6_NEEDED 6.2)
 

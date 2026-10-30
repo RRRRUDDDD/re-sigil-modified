@@ -28,6 +28,12 @@ else()
     set ( WIN_MIN_VERSION 6.1.7601 )
 endif()
 
+# Build the legacy variant against the Windows 7 API surface so newer
+# Windows-only calls fail at compile time instead of at runtime.
+if ( WIN32 AND BUILD_FOR_WIN7 )
+    add_definitions( -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 )
+endif()
+
 # Default to using Qt5 for builds
 # Enable Qt6 with -DUSEQT6=1 in cmake config command
 if ( NOT DEFINED USE_QT6 )
@@ -54,12 +60,16 @@ set( CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin )
 set( CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib )
 set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib )
 set( PACKAGE_DIRECTORY ${PROJECT_BINARY_DIR}/package )
-set( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake_extras" )
+# The vendored modules predate CMake 3.5 and shadow builtin modules, which
+# breaks Qt6's package config scripts. Only the legacy Qt5 path needs them.
+if ( NOT USE_QT6 )
+    set( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake_extras" )
+endif()
 
 set( SIGIL_MAJOR_VERSION 1 )
 set( SIGIL_MINOR_VERSION 9 )
 set( SIGIL_REVISION_VERSION 30 )
-set( SIGIL_ADDTION_VERSION X5D )
+set( SIGIL_ADDTION_VERSION X5E )
 set( SIGIL_FULL_VERSION ${SIGIL_MAJOR_VERSION}.${SIGIL_MINOR_VERSION}.${SIGIL_REVISION_VERSION}.${SIGIL_ADDTION_VERSION} )
 
 if( UNIX AND NOT APPLE )

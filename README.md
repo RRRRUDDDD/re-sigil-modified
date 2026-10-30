@@ -12,9 +12,9 @@ Sigil 对 EPUB 规范支持完善、操作界面友好，但编辑包含数百�
 
 ## 下载
 
-可在 [GitHub Releases](https://github.com/RRRRUDDDD/re-sigil-modified/releases) 下载自动构建的 Windows x86/x64 安装程序和 macOS x64/ARM64 DMG。
+可在 [GitHub Releases](https://github.com/RRRRUDDDD/re-sigil-modified/releases) 下载自动构建的 Windows x86/x64 安装程序、Windows 7 专用 Legacy 安装包、Linux x86_64 AppImage 和 macOS x64/ARM64 DMG。
 
-macOS 自动构建目前未签名、未公证，首次打开时可能被 Gatekeeper 拦截。
+macOS 自动构建目前未签名、未公证，首次打开时可能被 Gatekeeper 拦截。Linux AppImage 未签名，首次运行前需要 `chmod +x`。
 
 ## 主要功能
 
@@ -76,7 +76,12 @@ macOS 自动构建目前未签名、未公证，首次打开时可能被 Gatekee
 
 ## 支持平台
 
-- Windows 10、Windows 11，提供 x86 与 x64；不支持 Windows 7，Windows 8 未测试。
+- Windows 10、Windows 11，提供 x86 与 x64 标准安装包。
+- Windows 7 SP1，提供 x86 与 x64 Legacy 安装包，内嵌 Python 3.8 以兼容 Win7。
+  Win7 需要安装 KB2533623；预览若出现显示异常，可在首选项启用“禁用 GPU 加速”。
+- Linux x86_64，提供 AppImage，要求 glibc 2.35 及以上（Ubuntu 22.04、Debian 12 或更新发行版）。
+  AppImage 已内置供程序内部调用的 Python 3.10 运行环境；使用插件时仍需在首选项中配置带 PyQt5 的 Python 3 解释器。
+  若预览或启动时报沙箱相关错误，可用 `QTWEBENGINE_DISABLE_SANDBOX=1` 启动。
 - macOS x64 支持 11 及更高版本，ARM64 支持 12 及更高版本；x64 使用 Qt 5，ARM64 使用 Qt 6。
 
 ## 部分功能演示

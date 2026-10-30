@@ -101,6 +101,7 @@ private:
     QList<QPointer<CSSResource>> m_CSSResources;
     QPointer<Book> m_Book;
     QPointer<CSSResource> m_CurrentResource;
+    QString m_SyncedText;
     bool m_Loading;
     bool m_ChangePending;
 };

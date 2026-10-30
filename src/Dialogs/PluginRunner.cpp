@@ -24,6 +24,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDateTime>
 #include <QByteArray>
 #include <QXmlStreamReader>
 #include <QXmlStreamAttributes>
@@ -44,6 +45,7 @@
 #include "BookManipulation/CleanSource.h"
 #include "BookManipulation/XhtmlDoc.h"
 #include "Dialogs/PluginRunner.h"
+#include "ResourceObjects/ImageResource.h"
 #include "sigil_constants.h"
 
 // These are defined in Importers/ImportEPUB.cpp and can be made available by including sigil_constants.h
@@ -291,6 +293,7 @@ void PluginRunner::startPlugin()
     m_book->GetFolderKeeper()->SuspendWatchingResources();
     m_book->SaveAllResourcesToDisk();
     m_book->GetFolderKeeper()->ResumeWatchingResources();
+    SnapshotBinaryResourceStamps();
     ui.startButton->setEnabled(false);
     ui.okButton->setEnabled(false);
     ui.cancelButton->setEnabled(true);
@@ -403,6 +406,10 @@ void PluginRunner::startPlugin()
         m_process.setWorkingDirectory(QDir::toNativeSeparators(QFileInfo(m_enginePath).absolutePath()));
     }
     else {  // Linux native Python settings
+        // The AppImage exports PYTHONHOME/PYTHONPATH for Sigil's own embedded
+        // interpreter; the configured system interpreter must not inherit them.
+        env.remove("PYTHONHOME");
+        env.remove("PYTHONPATH");
         // Remove Sigil's appdir from LD_LIBRARY_PATH if it exists in environment so system Python can run unimpeded.
         QStringList ld = env.value("LD_LIBRARY_PATH", "").split(PATH_LIST_DELIM);
         ld.removeAll(appdir);
@@ -513,6 +520,21 @@ void PluginRunner::pluginFinished(int exitcode, QProcess::ExitStatus exitstatus)
             book_modified = true;
         }
     }
+
+    // Some image plugins write straight into the book folder instead of going
+    // through the launcher wrapper, so their edits never show up in the result
+    // XML. Detect those writes too, otherwise the book stays "unmodified" and
+    // closing Sigil would silently discard the new images.
+    const QList<Resource *> changed_binaries = BinaryResourcesChangedOnDisk();
+    if (!changed_binaries.isEmpty()) {
+        foreach (Resource *resource, changed_binaries) {
+            if (resource->Type() == Resource::ImageResourceType) {
+                static_cast<ImageResource *>(resource)->LoadFromDisk();
+            }
+        }
+        book_modified = true;
+    }
+
     if (m_pluginType == "validation") {
         m_mainWindow->SetValidationResults(m_validationResults);
     }
@@ -1084,11 +1106,73 @@ bool PluginRunner::modifyFiles(const QStringList &files)
 
                 XMLResource *xml_resource = qobject_cast<XMLResource *> (resource);
                 xml_resource->SetText(Utility::ReadUnicodeTextFile(inpath));
+
+            } else if (resource->Type() == Resource::ImageResourceType) {
+
+                // Binary resources keep no text cache, but an open image tab
+                // must still be told to show the file the plugin just wrote.
+                static_cast<ImageResource *>(resource)->LoadFromDisk();
             }
         }
     }
     return true;
 }
+
+
+static bool IsBinaryResource(const Resource::ResourceType type)
+{
+    return type == Resource::ImageResourceType   ||
+           type == Resource::AudioResourceType   ||
+           type == Resource::VideoResourceType   ||
+           type == Resource::FontResourceType;
+}
+
+
+void PluginRunner::SnapshotBinaryResourceStamps()
+{
+    m_resourceStamps.clear();
+    if (!m_book) {
+        return;
+    }
+    const QList<Resource *> resources = m_book->GetFolderKeeper()->GetResourceList();
+    foreach (Resource *resource, resources) {
+        if (!IsBinaryResource(resource->Type())) {
+            continue;
+        }
+        const QFileInfo fi(resource->GetFullPath());
+        if (fi.exists()) {
+            m_resourceStamps.insert(resource->GetFullPath(),
+                                    qMakePair(fi.lastModified().toMSecsSinceEpoch(), fi.size()));
+        }
+    }
+}
+
+
+QList<Resource *> PluginRunner::BinaryResourcesChangedOnDisk() const
+{
+    QList<Resource *> changed;
+    if (!m_book || m_resourceStamps.isEmpty()) {
+        return changed;
+    }
+    const QList<Resource *> resources = m_book->GetFolderKeeper()->GetResourceList();
+    foreach (Resource *resource, resources) {
+        if (!IsBinaryResource(resource->Type())) {
+            continue;
+        }
+        const QFileInfo fi(resource->GetFullPath());
+        if (!fi.exists()) {
+            continue;
+        }
+        const QPair<qint64, qint64> stamp(fi.lastModified().toMSecsSinceEpoch(), fi.size());
+        const QHash<QString, QPair<qint64, qint64>>::const_iterator it =
+            m_resourceStamps.constFind(resource->GetFullPath());
+        if (it == m_resourceStamps.constEnd() || it.value() != stamp) {
+            changed.append(resource);
+        }
+    }
+    return changed;
+}
+
 
 void PluginRunner::connectSignalsToSlots()
 {

@@ -19,6 +19,12 @@ if ( ${CMAKE_CURRENT_SOURCE_DIR} STREQUAL ${CMAKE_SOURCE_DIR} )
                          "You will probably now need to first clean your build directory." )
 endif()
 
+# Sources carry UTF-8 literals without a BOM; MSVC would otherwise read them
+# using the system ANSI code page and fail on non-ASCII string constants.
+if ( MSVC )
+    add_compile_options( /utf-8 )
+endif()
+
 # Source File Group Definitions
 set( MAIN_FILES
     sigil_constants.h
